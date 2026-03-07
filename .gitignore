@@ -1,0 +1,16 @@
+node_modules/
+config.json
+queue.json
+unban-requests.json
+history.json
+cert.pem
+key.pem
+*.pem
+*.key
+*.crt
+.env
+*.log
+npm-debug.log
+yay/
+{public,admin,scripts}/
+admin_index.html

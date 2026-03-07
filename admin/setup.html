@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Jukebox — First Run Setup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0a0a0a;
+    color: #ede9e1;
+    font-family: 'DM Sans', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    background: #141414;
+    border: 1px solid #2a2a2a;
+    border-radius: 12px;
+    padding: 36px;
+    width: 100%;
+    max-width: 400px;
+  }
+  h1 { font-family: 'Bebas Neue', sans-serif; font-size: 2.4rem; color: #e8c55a; letter-spacing: 0.06em; margin-bottom: 4px; }
+  .subtitle { color: #666; font-size: 0.85rem; margin-bottom: 28px; }
+  label { display: block; font-size: 0.78rem; color: #666; margin-bottom: 6px; }
+  .field { margin-bottom: 16px; }
+  input {
+    width: 100%; background: #1e1e1e; border: 1px solid #2a2a2a;
+    border-radius: 8px; padding: 11px 14px; color: #ede9e1;
+    font-family: 'DM Sans', sans-serif; font-size: 0.9rem; outline: none;
+    transition: border-color 0.15s;
+  }
+  input:focus { border-color: #e8c55a; }
+  button {
+    width: 100%; padding: 12px; background: #e8c55a; color: #0a0a0a;
+    border: none; border-radius: 8px; font-family: 'DM Sans', sans-serif;
+    font-size: 0.95rem; font-weight: 500; cursor: pointer; margin-top: 8px;
+    transition: opacity 0.15s;
+  }
+  button:hover { opacity: 0.88; }
+  .error { color: #e05252; font-size: 0.82rem; margin-top: 10px; display: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Jukebox</h1>
+  <p class="subtitle">First run — set your admin password to get started.</p>
+  <form method="POST" action="/admin/setup/save" onsubmit="return validate()">
+    <div class="field">
+      <label>Admin Password</label>
+      <input type="password" name="password" id="pw" placeholder="Choose a strong password" required />
+    </div>
+    <div class="field">
+      <label>Confirm Password</label>
+      <input type="password" name="confirm" id="cpw" placeholder="Repeat password" required />
+    </div>
+    <p class="error" id="err">Passwords do not match</p>
+    <button type="submit">Set Password & Enter Admin</button>
+  </form>
+</div>
+<script>
+  function validate() {
+    if (document.getElementById('pw').value !== document.getElementById('cpw').value) {
+      document.getElementById('err').style.display = 'block';
+      return false;
+    }
+    return true;
+  }
+</script>
+</body>
+</html>

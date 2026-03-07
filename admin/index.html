@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Jukebox Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0d0d0d;
+    --surface: #161616;
+    --surface2: #1f1f1f;
+    --border: #2c2c2c;
+    --accent: #e8c55a;
+    --accent-dim: rgba(232,197,90,0.1);
+    --text: #ede9e1;
+    --muted: #666;
+    --red: #e05252;
+    --green: #52c87a;
+    --radius: 10px;
+  }
+  html, body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 14px; min-height: 100vh; -webkit-font-smoothing: antialiased; }
+
+  /* ── Layout ── */
+  .layout { display: flex; min-height: 100vh; }
+  nav {
+    width: 220px;
+    flex-shrink: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 24px 0;
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    height: 100vh;
+    overflow-y: auto;
+  }
+  .nav-logo { font-family: 'Bebas Neue', sans-serif; font-size: 1.8rem; color: var(--accent); padding: 0 20px 20px; letter-spacing: 0.06em; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+  .nav-logo span { display: block; font-family: 'DM Sans', sans-serif; font-size: 0.68rem; color: var(--muted); letter-spacing: 0.12em; text-transform: uppercase; margin-top: 2px; }
+  .nav-link {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 20px; color: var(--muted);
+    text-decoration: none; font-size: 0.88rem; font-weight: 400;
+    border-left: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+    cursor: pointer; border-top: none; border-right: none; border-bottom: none;
+    background: none; width: 100%; text-align: left;
+  }
+  .nav-link:hover { color: var(--text); background: var(--accent-dim); }
+  .nav-link.active { color: var(--accent); border-left-color: var(--accent); background: var(--accent-dim); }
+  .nav-link svg { flex-shrink: 0; }
+
+  main { margin-left: 220px; flex: 1; padding: 32px; max-width: 860px; }
+
+  /* ── Sections ── */
+  .section { display: none; }
+  .section.active { display: block; }
+  .section-title { font-family: 'Bebas Neue', sans-serif; font-size: 1.8rem; letter-spacing: 0.05em; color: var(--accent); margin-bottom: 24px; }
+
+  /* ── Cards ── */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
+  .card-title { font-size: 0.72rem; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; font-weight: 500; margin-bottom: 14px; }
+
+  /* ── Now playing ── */
+  .np-row { display: flex; align-items: center; gap: 14px; }
+  #admin-np-art { width: 60px; height: 60px; border-radius: 6px; object-fit: cover; background: var(--surface2); flex-shrink: 0; }
+  .np-meta { flex: 1; min-width: 0; }
+  .np-track { font-size: 1rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .np-artist-txt { color: var(--muted); font-size: 0.82rem; margin-top: 2px; }
+  .np-progress-wrap { height: 3px; background: var(--border); border-radius: 2px; margin-top: 8px; }
+  .np-progress { height: 3px; background: var(--accent); border-radius: 2px; transition: width 1s linear; }
+
+  /* ── Queue table ── */
+  .queue-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    border-radius: 6px;
+    transition: background 0.12s;
+  }
+  .queue-row:hover { background: var(--surface2); }
+  .drag-handle { cursor: grab; color: var(--muted); padding: 0 2px; font-size: 1.1rem; }
+  .drag-handle:active { cursor: grabbing; }
+  .q-art { width: 38px; height: 38px; border-radius: 4px; object-fit: cover; flex-shrink: 0; background: var(--surface2); }
+  .q-info { flex: 1; min-width: 0; }
+  .q-title { font-size: 0.88rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .q-artist { font-size: 0.75rem; color: var(--muted); }
+  .btn-remove {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: none; border: 1px solid var(--border);
+    color: var(--muted); font-size: 1rem; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .btn-remove:hover { border-color: var(--red); color: var(--red); }
+
+  /* ── Controls ── */
+  .controls-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+
+  /* ── Form elements ── */
+  .field { margin-bottom: 16px; }
+  label { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 6px; letter-spacing: 0.04em; }
+  input[type=text], input[type=password], input[type=number] {
+    width: 100%; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 7px; padding: 10px 12px; color: var(--text);
+    font-family: 'DM Sans', sans-serif; font-size: 0.9rem; outline: none;
+    transition: border-color 0.15s;
+  }
+  input:focus { border-color: var(--accent); }
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 9px 18px; border-radius: 7px; border: none;
+    font-family: 'DM Sans', sans-serif; font-size: 0.88rem; font-weight: 500;
+    cursor: pointer; transition: opacity 0.15s, transform 0.1s;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn-primary { background: var(--accent); color: #0a0a0a; }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-danger { background: rgba(224,82,82,0.15); color: var(--red); border: 1px solid rgba(224,82,82,0.3); }
+  .btn-skip { background: rgba(232,197,90,0.12); color: var(--accent); border: 1px solid rgba(232,197,90,0.3); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  /* ── Status badge ── */
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 0.75rem; padding: 3px 10px; border-radius: 100px; font-weight: 500;
+  }
+  .badge::before { content: ''; width: 7px; height: 7px; border-radius: 50%; display: block; }
+  .badge.connected { background: rgba(82,200,122,0.12); color: var(--green); }
+  .badge.connected::before { background: var(--green); }
+  .badge.disconnected { background: rgba(224,82,82,0.12); color: var(--red); }
+  .badge.disconnected::before { background: var(--red); }
+
+  /* ── Toast ── */
+  #toast {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--surface2); border: 1px solid var(--border);
+    padding: 11px 18px; border-radius: 8px;
+    font-size: 0.84rem; opacity: 0; pointer-events: none;
+    transition: opacity 0.2s, transform 0.2s;
+    transform: translateY(10px);
+    z-index: 200;
+  }
+  #toast.show { opacity: 1; transform: none; }
+  #toast.success { border-color: var(--green); color: var(--green); }
+  #toast.error { border-color: var(--red); color: var(--red); }
+
+  .empty-state { color: var(--muted); text-align: center; padding: 20px; font-size: 0.85rem; }
+  .divider { height: 1px; background: var(--border); margin: 20px 0; }
+  .info-text { font-size: 0.82rem; color: var(--muted); line-height: 1.6; }
+  code { background: var(--surface2); padding: 2px 6px; border-radius: 4px; font-size: 0.85em; color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="layout">
+  <!-- Nav -->
+  <nav>
+    <div class="nav-logo">Jukebox<span>Admin Panel</span></div>
+    <button class="nav-link active" onclick="showSection('queue')" data-section="queue">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      Queue
+    </button>
+    <button class="nav-link" onclick="showSection('spotify')" data-section="spotify">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12.5c2.5-1 5.5-1 8 0"/><path d="M6.5 9.5c3.5-1.5 7.5-1.5 11 0"/><path d="M9.5 15.5c1.8-.8 3.8-.8 5.5 0"/></svg>
+      Spotify
+    </button>
+    <button class="nav-link" onclick="showSection('rules')" data-section="rules">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+      Rules
+    </button>
+    <button class="nav-link" onclick="showSection('moderation')" data-section="moderation">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      Moderation
+    </button>
+    <button class="nav-link" onclick="showSection('security')" data-section="security">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      Security
+    </button>
+  </nav>
+
+  <main>
+
+    <!-- ── Queue section ── -->
+    <div class="section active" id="section-queue">
+      <div class="section-title">Queue</div>
+
+      <!-- Now Playing -->
+      <div class="card">
+        <div class="card-title">Now Playing</div>
+        <div class="np-row">
+          <img id="admin-np-art" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Crect width='60' height='60' fill='%231f1f1f'/%3E%3C/svg%3E" alt="" />
+          <div class="np-meta">
+            <div class="np-track" id="admin-np-title">Nothing playing</div>
+            <div class="np-artist-txt" id="admin-np-artist">—</div>
+            <div class="np-progress-wrap"><div class="np-progress" id="admin-np-bar" style="width:0%"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="controls-row">
+        <button class="btn btn-skip" onclick="skipTrack()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+          Skip Track
+        </button>
+        <button class="btn btn-secondary" onclick="syncQueue()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+          Sync with Spotify
+        </button>
+        <button class="btn btn-danger" onclick="clearQueue()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14H7L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+          Clear Queue
+        </button>
+      </div>
+
+      <!-- Queue -->
+      <div class="card">
+        <div class="card-title">Upcoming Queue</div>
+        <div id="admin-queue-list"><div class="empty-state">Queue is empty</div></div>
+      </div>
+    </div>
+
+    <!-- ── Spotify section ── -->
+    <div class="section" id="section-spotify">
+      <div class="section-title">Spotify Setup</div>
+
+      <div class="card">
+        <div class="card-title">Connection Status</div>
+        <div id="spotify-status" class="badge disconnected">Not connected</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">API Credentials</div>
+        <p class="info-text" style="margin-bottom:16px">
+          Get your credentials at <code>developer.spotify.com/dashboard</code> → Create App.<br>
+          Set Redirect URI to: <code id="redirect-uri-display">https://[your-ip]:3000/auth/callback</code>
+        </p>
+        <div class="field">
+          <label>Client ID</label>
+          <input type="text" id="sp-client-id" placeholder="Paste your Client ID" />
+        </div>
+        <div class="field">
+          <label>Client Secret</label>
+          <input type="password" id="sp-client-secret" placeholder="Paste your Client Secret (leave blank to keep existing)" />
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn btn-secondary" onclick="saveCredentials()">Save Credentials</button>
+          <button class="btn btn-primary" onclick="authorizeSpotify()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            Authorize with Spotify
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Rules section ── -->
+    <div class="section" id="section-rules">
+      <div class="section-title">Queue Rules</div>
+      <div class="card">
+        <div class="field-row">
+          <div class="field">
+            <label>Rate limit (minutes between requests)</label>
+            <input type="number" id="rule-ratelimit" min="1" max="60" value="5" />
+          </div>
+          <div class="field">
+            <label>Max queue length (total songs)</label>
+            <input type="number" id="rule-maxqueue" min="1" max="100" value="20" />
+          </div>
+        </div>
+        <div class="field" style="max-width:240px">
+          <label>Max songs per device in queue</label>
+          <input type="number" id="rule-perdevice" min="1" max="10" value="2" />
+        </div>
+        <button class="btn btn-primary" onclick="saveRules()">Save Rules</button>
+      </div>
+    </div>
+
+    <!-- ── Moderation section ── -->
+    <div class="section" id="section-moderation">
+      <div class="section-title">Moderation</div>
+
+      <div class="card" id="unban-card" style="display:none">
+        <div class="card-title">Unban Requests</div>
+        <div id="unban-list" style="max-height:480px;overflow-y:auto"><div class="empty-state">No pending requests</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Request History</div>
+        <div id="history-list" style="max-height:480px;overflow-y:auto"><div class="empty-state">No requests yet</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Blocked Devices</div>
+        <div id="blocked-list" style="max-height:480px;overflow-y:auto"><div class="empty-state">No blocked devices</div></div>
+      </div>
+    </div>
+
+    <!-- ── Security section ── -->
+    <div class="section" id="section-security">
+      <div class="section-title">Security</div>
+      <div class="card">
+        <div class="card-title">Change Admin Password</div>
+        <div class="field" style="max-width:320px">
+          <label>New Password</label>
+          <input type="password" id="new-password" placeholder="Min. 6 characters" />
+        </div>
+        <div class="field" style="max-width:320px">
+          <label>Confirm Password</label>
+          <input type="password" id="confirm-password" placeholder="Repeat new password" />
+        </div>
+        <button class="btn btn-primary" onclick="changePassword()">Update Password</button>
+        <p class="info-text" style="margin-top:12px">After changing the password, your browser will prompt you to re-enter credentials.</p>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  let toastTimeout;
+  let dragSrc = null;
+
+  // ── Toast ──
+  function toast(msg, type = 'info') {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'show ' + type;
+    clearTimeout(toastTimeout);
+    toastTimeout = setTimeout(() => t.className = '', 3000);
+  }
+
+  // ── Nav ──
+  function showSection(id) {
+    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+    document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+    document.getElementById('section-' + id).classList.add('active');
+    if (id === 'moderation') { loadUnbanRequests(); loadHistory(); loadBlocked(); }
+    document.querySelector(`[data-section="${id}"]`).classList.add('active');
+    window.location.hash = id;
+  }
+
+  // Check for Spotify connected redirect
+  if (window.location.search.includes('spotify=connected')) {
+    toast('Spotify connected successfully!', 'success');
+    history.replaceState({}, '', '/admin#spotify');
+    showSection('spotify');
+  } else if (window.location.hash) {
+    showSection(window.location.hash.slice(1));
+  }
+
+  // ── Load config ──
+  async function loadConfig() {
+    try {
+      const r = await fetch('/admin/api/config');
+      const d = await r.json();
+
+      // Spotify
+      document.getElementById('sp-client-id').value = d.spotify.clientId || '';
+      const status = document.getElementById('spotify-status');
+      if (d.spotify.connected) {
+        status.className = 'badge connected';
+        status.textContent = 'Connected';
+      } else {
+        status.className = 'badge disconnected';
+        status.textContent = 'Not connected';
+      }
+
+      // Rules
+      document.getElementById('rule-ratelimit').value = d.rules.rateLimitMinutes;
+      document.getElementById('rule-maxqueue').value = d.rules.maxQueueLength;
+      document.getElementById('rule-perdevice').value = d.rules.maxSongsPerDevice;
+
+      // Redirect URI hint
+      document.getElementById('redirect-uri-display').textContent =
+        `${window.location.protocol}//${window.location.host}/auth/callback`;
+    } catch {}
+  }
+
+  // ── Queue ──
+  async function loadAdminQueue() {
+    try {
+      const r = await fetch('/admin/api/queue');
+      const d = await r.json();
+      const list = document.getElementById('admin-queue-list');
+      if (!d.queue.length) {
+        list.innerHTML = '<div class="empty-state">Queue is empty</div>';
+        return;
+      }
+      list.innerHTML = d.queue.map((s, i) => `
+        <div class="queue-row" draggable="true" data-id="${s.id}" data-idx="${i}"
+          ondragstart="dragStart(event)" ondragover="dragOver(event)" ondrop="dragDrop(event)">
+          <span class="drag-handle" title="Drag to reorder">⠿</span>
+          <img class="q-art" src="${s.albumArt}" alt="" />
+          <div class="q-info">
+            <div class="q-title">${escHtml(s.title)}</div>
+            <div class="q-artist">${escHtml(s.artist)}</div>
+          </div>
+          <button class="btn-remove" onclick="removeTrack('${s.id}')" title="Remove">×</button>
+        </div>
+      `).join('');
+    } catch {}
+  }
+
+  async function skipTrack() {
+    const r = await fetch('/admin/api/skip', { method: 'POST' });
+    const d = await r.json();
+    if (d.success) { toast('Skipped!', 'success'); loadAdminQueue(); loadNowPlaying(); }
+    else toast(d.error, 'error');
+  }
+
+  async function syncQueue() {
+    const r = await fetch('/admin/api/queue/sync', { method: 'POST' });
+    const d = await r.json();
+    if (d.success) { toast(`Synced — removed ${d.removed}, ${d.remaining} remaining`, 'success'); loadAdminQueue(); }
+    else toast(d.error, 'error');
+  }
+
+  async function clearQueue() {
+    if (!confirm('Clear the queue display? Songs already sent to Spotify will still play. Clear Spotify queue manually.')) return;
+    const r = await fetch('/admin/api/queue/clear', { method: 'POST' });
+    const d = await r.json();
+    if (d.success) { toast('Queue cleared', 'success'); loadAdminQueue(); }
+    else toast(d.error, 'error');
+  }
+
+  async function removeTrack(id) {
+    const r = await fetch(`/admin/api/queue/${id}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (d.success) { toast('Removed', 'success'); loadAdminQueue(); }
+    else toast(d.error, 'error');
+  }
+
+  // ── Drag reorder ──
+  function dragStart(e) {
+    dragSrc = e.currentTarget;
+    e.dataTransfer.effectAllowed = 'move';
+  }
+  function dragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  }
+  async function dragDrop(e) {
+    e.preventDefault();
+    const target = e.currentTarget;
+    if (dragSrc === target) return;
+    const from = parseInt(dragSrc.dataset.idx);
+    const to = parseInt(target.dataset.idx);
+    await fetch('/admin/api/queue/reorder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fromIndex: from, toIndex: to })
+    });
+    loadAdminQueue();
+  }
+
+  // ── Spotify ──
+  async function saveCredentials() {
+    const clientId = document.getElementById('sp-client-id').value.trim();
+    const clientSecret = document.getElementById('sp-client-secret').value.trim();
+    if (!clientId) return toast('Client ID is required', 'error');
+    const r = await fetch('/admin/api/spotify/credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId, clientSecret })
+    });
+    const d = await r.json();
+    if (d.success) toast('Credentials saved', 'success');
+    else toast(d.error, 'error');
+    loadConfig();
+  }
+
+  function authorizeSpotify() {
+    window.location.href = '/admin/spotify/authorize';
+  }
+
+  // ── Rules ──
+  async function saveRules() {
+    const r = await fetch('/admin/api/rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rateLimitMinutes: document.getElementById('rule-ratelimit').value,
+        maxQueueLength: document.getElementById('rule-maxqueue').value,
+        maxSongsPerDevice: document.getElementById('rule-perdevice').value
+      })
+    });
+    const d = await r.json();
+    if (d.success) toast('Rules saved', 'success');
+    else toast(d.error, 'error');
+  }
+
+  // ── Password ──
+  async function changePassword() {
+    const pw = document.getElementById('new-password').value;
+    const confirm = document.getElementById('confirm-password').value;
+    if (pw !== confirm) return toast('Passwords do not match', 'error');
+    if (pw.length < 6) return toast('Password too short', 'error');
+    const r = await fetch('/admin/api/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newPassword: pw })
+    });
+    const d = await r.json();
+    if (d.success) { toast('Password updated — please log in again', 'success'); setTimeout(() => location.reload(), 1500); }
+    else toast(d.error, 'error');
+  }
+
+  // ── Now playing (admin) ──
+  async function loadNowPlaying() {
+    try {
+      const r = await fetch('/api/nowplaying');
+      const d = await r.json();
+      if (!d.playing) return;
+      document.getElementById('admin-np-art').src = d.albumArt;
+      document.getElementById('admin-np-title').textContent = d.title;
+      document.getElementById('admin-np-artist').textContent = d.artist;
+      const pct = d.duration ? (d.progress / d.duration) * 100 : 0;
+      document.getElementById('admin-np-bar').style.width = pct + '%';
+    } catch {}
+  }
+
+  // ── Utils ──
+  function escHtml(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  async function shortId(fp) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(fp));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('').slice(0,8);
+  }
+
+  // ── Moderation ──
+  async function loadHistory() {
+    try {
+      const r = await fetch('/admin/api/history?_=' + Date.now());
+      const d = await r.json();
+      const list = document.getElementById('history-list');
+      if (!d.history.length) { list.innerHTML = '<div class="empty-state">No requests yet</div>'; return; }
+      list.innerHTML = d.history.map(h => {
+        const dev = h.device;
+        const devParts = [];
+        if (dev) {
+          devParts.push(dev.mobile ? '📱' : '💻');
+          if (dev.model) devParts.push(dev.model);
+          devParts.push(dev.os, dev.browser, dev.ip);
+        }
+        const deviceLabel = devParts.length ? devParts.join(' · ') : '';
+        return `
+        <div class="queue-row" style="opacity:${h.isBlocked ? '0.5' : '1'}">
+          <img class="q-art" src="${h.albumArt}" alt="" />
+          <div class="q-info">
+            <div class="q-title">${escHtml(h.title)} — ${escHtml(h.artist)}</div>
+            <div class="q-artist">${deviceLabel || 'Device'} · ${h.fingerprintShort} · ${new Date(h.addedAt).toLocaleTimeString()}</div>
+          </div>
+          ${h.isBlocked
+            ? `<button class="btn btn-secondary" style="font-size:0.78rem;padding:5px 10px" onclick="unblockDevice('${h.fingerprint}')">Unblock</button>`
+            : `<button class="btn btn-danger" style="font-size:0.78rem;padding:5px 10px" onclick="showBlockModal('${h.fingerprint}', '${escHtml(h.title)}')">Block</button>`
+          }
+        </div>`;
+      }).join('');
+    } catch {}
+  }
+
+  async function loadBlocked() {
+    try {
+      const r = await fetch('/admin/api/blocked?_=' + Date.now());
+      const d = await r.json();
+      const list = document.getElementById('blocked-list');
+      if (!d.blocked.length) { list.innerHTML = '<div class="empty-state">No blocked devices</div>'; return; }
+      list.innerHTML = d.blocked.map(b => {
+        const dev = b.device;
+        const sid = b.shortId || b.fingerprint.slice(-8);
+        const devParts2 = [];
+        if (dev) {
+          devParts2.push(dev.mobile ? '📱' : '💻');
+          if (dev.model) devParts2.push(dev.model);
+          devParts2.push(dev.os, dev.browser, dev.ip);
+        }
+        const deviceLabel = devParts2.length ? devParts2.join(' · ') : '';
+        return `
+        <div class="queue-row" style="flex-wrap:wrap;gap:8px">
+          <div class="q-info" style="flex:1;min-width:180px">
+            <div class="q-title">${deviceLabel || 'Device'} <span style="opacity:0.4">${sid}</span></div>
+            <div class="q-artist">${b.comment ? '📝 ' + escHtml(b.comment) : '<span style="opacity:0.4">No comment</span>'}</div>
+            ${b.blockedAt ? `<div class="q-artist" style="opacity:0.35">${new Date(b.blockedAt).toLocaleString()}</div>` : ''}
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="btn btn-secondary" style="font-size:0.78rem;padding:5px 10px" onclick="showEditCommentModal('${b.fingerprint}', '${(b.comment||'').replace(/'/g,"\\'")}')">✏️</button>
+            <button class="btn btn-secondary" style="font-size:0.78rem;padding:5px 10px" onclick="unblockDevice('${b.fingerprint}')">Unblock</button>
+          </div>
+        </div>`;
+      }).join('');
+    } catch {}
+  }
+
+  // ── Inline modal ──
+  let _modalFp = null;
+  let _modalMode = null; // 'block' or 'comment'
+
+  async function showBlockModal(fp, songTitle) {
+    _modalFp = fp;
+    _modalMode = 'block';
+    const sid = await shortId(fp);
+    document.getElementById('modal-title').textContent = 'Block device ...' + sid;
+    document.getElementById('modal-comment').value = songTitle ? 'Blocked after requesting: ' + songTitle : '';
+    document.getElementById('modal-overlay').style.display = 'flex';
+    document.getElementById('modal-comment').focus();
+  }
+
+  async function showEditCommentModal(fp, currentComment) {
+    _modalFp = fp;
+    _modalMode = 'comment';
+    const sid = await shortId(fp);
+    document.getElementById('modal-title').textContent = 'Edit comment for ...' + sid;
+    document.getElementById('modal-comment').value = currentComment;
+    document.getElementById('modal-overlay').style.display = 'flex';
+    document.getElementById('modal-comment').focus();
+  }
+
+  function closeModal() {
+    document.getElementById('modal-overlay').style.display = 'none';
+    _modalFp = null;
+  }
+
+  async function confirmModal() {
+    const fp = _modalFp;
+    const mode = _modalMode;
+    const comment = document.getElementById('modal-comment').value;
+    closeModal();
+    if (mode === 'block') {
+      await fetch('/admin/api/block', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ fingerprint: fp, comment }) });
+      toast('Device blocked', 'success');
+      loadHistory();
+      loadBlocked();
+    } else {
+      await fetch('/admin/api/block/comment', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ fingerprint: fp, comment }) });
+      toast('Comment updated', 'success');
+      loadBlocked();
+    }
+  }
+
+  async function unblockDevice(fp) {
+    await fetch('/admin/api/unblock', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ fingerprint: fp }) });
+    toast('Device unblocked', 'success');
+    loadHistory();
+    loadBlocked();
+  }
+
+
+  // ── Unban requests ──
+  async function loadUnbanRequests() {
+    const card = document.getElementById('unban-card');
+    const list = document.getElementById('unban-list');
+    try {
+      const r = await fetch('/admin/api/unban-requests?_=' + Date.now());
+      if (!r.ok) { card.style.display = 'none'; return; }
+      const d = await r.json();
+      if (!d.requests.length) {
+        card.style.display = 'none';
+        return;
+      }
+      card.style.display = 'block';
+      list.innerHTML = d.requests.map(req => {
+        const dev = req.device;
+        const devParts = [];
+        if (dev) {
+          devParts.push(dev.mobile ? '📱' : '💻');
+          if (dev.model) devParts.push(dev.model);
+          devParts.push(dev.os, dev.browser, dev.ip);
+        }
+        const deviceLabel = devParts.length ? devParts.join(' · ') : req.fingerprintShort;
+        return `
+        <div class="queue-row" style="flex-wrap:wrap;gap:8px">
+          <div class="q-info" style="flex:1;min-width:180px">
+            <div class="q-title">${deviceLabel} <span style="opacity:0.4">${req.fingerprintShort}</span></div>
+            ${req.message ? `<div class="q-artist">💬 ${escHtml(req.message)}</div>` : ''}
+            <div class="q-artist" style="opacity:0.35">${new Date(req.createdAt).toLocaleString()}</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="btn btn-primary" style="font-size:0.78rem;padding:5px 12px" onclick="approveUnban('${req.id}', this)">Approve</button>
+            <button class="btn btn-danger" style="font-size:0.78rem;padding:5px 12px" onclick="denyUnban('${req.id}', this)">Deny</button>
+          </div>
+        </div>`;
+      }).join('');
+    } catch {}
+  }
+
+  async function approveUnban(id, btn) {
+    btn.disabled = true;
+    btn.textContent = '...';
+    await fetch(`/admin/api/unban-requests/${id}/approve`, { method: 'POST' });
+    toast('Device unbanned', 'success');
+    setTimeout(() => { window.location.hash = 'moderation'; location.reload(); }, 800);
+  }
+
+  async function denyUnban(id, btn) {
+    btn.disabled = true;
+    btn.textContent = '...';
+    await fetch(`/admin/api/unban-requests/${id}/deny`, { method: 'POST' });
+    toast('Request denied', 'success');
+    setTimeout(() => { window.location.hash = 'moderation'; location.reload(); }, 800);
+  }
+
+  // ── Init ──
+  loadConfig();
+  loadAdminQueue();
+  loadNowPlaying();
+
+  setInterval(loadAdminQueue, 8000);
+  setInterval(loadNowPlaying, 5000);
+</script>
+
+<!-- Block/comment modal -->
+<div id="modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;width:100%;max-width:400px;margin:20px">
+    <div id="modal-title" style="font-size:1rem;font-weight:500;margin-bottom:16px;color:var(--text)"></div>
+    <textarea id="modal-comment" rows="3" placeholder="Comment (optional)..." style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:10px 12px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:0.88rem;resize:vertical;outline:none;margin-bottom:16px"></textarea>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmModal()">Confirm</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>

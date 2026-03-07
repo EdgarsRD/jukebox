@@ -1,0 +1,28 @@
+{
+  "name": "jukebox",
+  "version": "1.0.0",
+  "description": "Bar jukebox — patron song request queue via Spotify",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "bcryptjs": "^2.4.3",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "nodemonConfig": {
+    "ignore": [
+      "history.json",
+      "queue.json",
+      "unban-requests.json",
+      "config.json",
+      "*.pem",
+      "node_modules"
+    ]
+  }
+}

@@ -7,8 +7,8 @@ Bar song request queue. Patrons connect to WiFi, scan a QR code, search Spotify 
 ## How it works
 
 - Runs on a dedicated machine at the bar
-- Patrons open `https://jukebox.kzd:3000` (via QR code)
-- `jukebox.kzd` is a local-only domain — resolves inside the bar's WiFi only
+- Patrons open `https://your-domain:3000` (via QR code)
+- The domain is a local-only name — resolves inside the bar's WiFi only
 - Everything (code, config, certs) lives in one folder — portable to any spare machine if needed
 
 ---
@@ -21,7 +21,26 @@ Bar song request queue. Patrons connect to WiFi, scan a QR code, search Spotify 
 
 ---
 
-## Initial Setup (production machine)
+## Quick Start
+
+```bash
+npm install
+node server.js
+```
+
+Open `http://localhost:3000/admin` — the setup wizard walks you through everything:
+
+1. Create admin account
+2. Configure domain & network
+3. Generate SSL certificate
+4. Connect Spotify
+5. Set queue rules
+
+The server auto-restarts after cert generation and the wizard resumes seamlessly on HTTPS.
+
+---
+
+## Production Setup
 
 ### 1. Set a static local IP
 
@@ -51,74 +70,49 @@ network:
 sudo netplan apply
 ```
 
-### 2. Set up local DNS on your router
-
-Log into your router admin panel and add a custom DNS record:
-
-```
-jukebox.kzd  →  192.168.1.50
-```
-
-This is usually under: Advanced → DNS → Local DNS Records (varies by router).
-Once set, any device on the WiFi can reach the server at `jukebox.kzd`.
-
-### 3. Generate the TLS certificate
-
-```bash
-cd ~/jukebox
-bash scripts/gen-cert.sh
-```
-
-Generates a cert for `jukebox.kzd` + your local IP, valid 10 years.
-Stored in the project folder — travels with it.
-
-### 4. Install as a systemd service
+### 2. Install as a systemd service
 
 ```bash
 sudo bash scripts/install-service.sh
 ```
 
-Autostart on boot, restarts on crash.
+Autostart on boot, auto-restarts on crash or when triggered from the admin panel.
 
-### 5. Complete setup in the admin panel
+### 3. Run the setup wizard
 
-Open `https://jukebox.kzd:3000/admin` on the bar machine.
-- Set admin password (first run)
-- Add Spotify credentials → Authorize
-- Configure queue rules
+Open `http://localhost:3000/admin` on the bar machine and follow the wizard. It handles admin account, domain, SSL cert, Spotify, and queue rules — all in one flow.
 
-### 6. Make QR codes
+### 4. Set up local DNS on your router
+
+After the wizard tells you the domain and IP, log into your router admin panel and add a custom DNS record:
+
+```
+your-domain  →  192.168.1.50
+```
+
+This is usually under: Advanced → DNS → Local DNS Records (varies by router).
+Once set, any device on the WiFi can reach the server at `your-domain`.
+
+### 5. Make QR codes
 
 Generate two QR codes to post at the bar:
 1. **WiFi** — your router's guest network QR (you already have this)
-2. **Jukebox** — points to `https://jukebox.kzd:3000`
+2. **Jukebox** — points to `https://your-domain:3000`
 
 Patrons will see a one-time "Not Secure" browser warning.
 They tap Advanced → Proceed. Never see it again on that device.
 
 ---
 
-## Dev Setup (Arch Linux / any machine)
+## Dev Setup
 
-Since you won't have `jukebox.kzd` resolving locally during dev, use `/etc/hosts`:
-
-```bash
-# Add to /etc/hosts:
-127.0.0.1   jukebox.kzd
-```
-
-Then:
 ```bash
 npm install
-bash scripts/gen-cert.sh    # generates cert for jukebox.kzd + your local IP
 npm run dev                  # nodemon — auto-restarts on changes
 ```
 
-Open `https://jukebox.kzd:3000` — accept the cert warning once, done.
-Admin at `https://jukebox.kzd:3000/admin`.
-
-> The `/etc/hosts` entry is only needed on your dev machine.
-> On the bar network, the router handles DNS for all devices automatically.
+Open `http://localhost:3000/admin` — run through the setup wizard.
+The cert covers `localhost` as a SAN, so HTTPS works without any `/etc/hosts` entries.
 
 ---
 
@@ -146,8 +140,9 @@ On the bar machine, staff runs the "Update Jukebox" shortcut (or `bash update.sh
    bash scripts/start.sh
    ```
 3. Follow prompts — installs service, starts server
-4. Update the router's DNS record to point `jukebox.kzd` at the new machine's IP
-5. Back up in minutes
+4. Open `http://localhost:3000/admin` to verify or reconfigure
+5. Update the router's DNS record to point your domain at the new machine's IP
+6. Back up in minutes
 
 > `config.json`, `cert.pem`, and `key.pem` travel on the USB —
 > Spotify auth, password, and rules are all preserved.
@@ -171,22 +166,19 @@ sudo systemctl stop jukebox         # stop manually
 jukebox/
 ├── server.js           — Express server + all API routes
 ├── package.json
-├── config.json         — Auto-created on first run (gitignored)
-├── config.example.json — Template for config.json
+├── config.json         — Auto-created by setup wizard (gitignored)
 ├── cert.pem            — TLS cert (gitignored, travels with app)
 ├── key.pem             — TLS key (gitignored, travels with app)
-├── queue.json          — Persisted queue state (gitignored)
 ├── history.json        — Request history (gitignored)
 ├── public/
 │   └── index.html      — Patron UI (search + queue)
 ├── admin/
 │   ├── index.html      — Admin panel (queue mgmt, Spotify, rules, moderation)
-│   └── setup.html      — First-run password setup
-├── scripts/
-│   ├── gen-cert.sh         — Generate TLS cert
-│   ├── start.sh            — USB recovery: one command to get back online
-│   └── install-service.sh  — Install systemd autostart service
-└── update.sh           — Pull latest code + restart service
+│   └── setup.html      — First-run setup wizard (5-step guided flow)
+└── scripts/
+    ├── gen-cert.sh         — Generate TLS cert (standalone, wizard uses API instead)
+    ├── start.sh            — USB recovery: one command to get back online
+    └── install-service.sh  — Install systemd autostart service
 ```
 
 ---
@@ -195,8 +187,5 @@ jukebox/
 
 - Needs a **Spotify Premium** account
 - Spotify must be **open and active** on the bar machine for queue requests to work
-- In Spotify Developer Dashboard, set Redirect URI to:
-  ```
-  https://jukebox.kzd:3000/auth/callback
-  ```
-- Do all Spotify config through the admin panel — no file editing needed
+- The setup wizard tells you the exact Redirect URI to use in the Spotify Developer Dashboard
+- Do all Spotify config through the setup wizard or admin panel — no file editing needed

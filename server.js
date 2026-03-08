@@ -559,6 +559,13 @@ app.get('/admin/setup/spotify/authorize', (req, res) => {
 // ─── Admin routes (protected) ─────────────────────────────────────────────────
 
 const adminRouter = express.Router();
+
+// Logout — must be before adminAuth to avoid auth check
+adminRouter.get('/api/logout', (req, res) => {
+  res.set('WWW-Authenticate', 'Basic realm="Jukebox Admin"');
+  res.status(401).send('<html><head><meta http-equiv="refresh" content="0;url=/admin"></head></html>');
+});
+
 adminRouter.use(adminAuth);
 
 adminRouter.get('/', (req, res) => {
@@ -569,6 +576,7 @@ adminRouter.get('/', (req, res) => {
 adminRouter.get('/api/auth/role', (req, res) => {
   res.json({ role: req.authRole });
 });
+
 
 // Trusted devices (superadmin only)
 adminRouter.get('/api/trusted-devices', requireSuperadmin, (req, res) => {

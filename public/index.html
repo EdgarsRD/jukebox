@@ -541,11 +541,26 @@
     btn.textContent = '…';
     btn.disabled = true;
     try {
+      let uri = item.dataset.uri;
+      // If no URI stored, search Spotify to resolve it
+      if (!uri) {
+        const q = `${item.dataset.title} ${item.dataset.artist}`;
+        const sr = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+        const sd = await sr.json();
+        if (sd.results && sd.results.length) {
+          uri = sd.results[0].uri;
+        } else {
+          showToast('Could not find song on Spotify', 'error');
+          btn.textContent = '+';
+          btn.disabled = false;
+          return;
+        }
+      }
       const res = await fetch('/api/queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          uri: item.dataset.uri,
+          uri,
           title: item.dataset.title,
           artist: item.dataset.artist,
           albumArt: item.dataset.art
@@ -583,7 +598,7 @@
               <div class="top-artist">${escHtml(s.artist)}</div>
             </div>
             <span class="top-count">${s.count}×</span>
-            ${s.uri ? `<button class="top-add" aria-label="Add to queue">+</button>` : ''}
+            <button class="top-add" aria-label="Add to queue">+</button>
           </div>
         `).join('') + '</div>';
     } catch {}

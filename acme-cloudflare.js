@@ -82,42 +82,60 @@ async function obtainCertificate({ domain, cloudflareToken, certPath, keyPath, a
   let accountKeyPem;
   if (accountKey) {
     accountKeyPem = accountKey;
+    console.log('[LE] Reusing existing account key');
   } else {
+    console.log('[LE] Generating new account key...');
     accountKeyPem = (await acme.crypto.createPrivateKey()).toString();
+    console.log('[LE] Account key generated');
   }
 
   // Create CSR + certificate private key
+  console.log('[LE] Creating CSR...');
   const [certKey, csr] = await acme.crypto.createCsr({ commonName: domain });
+  console.log('[LE] CSR created');
 
   // ACME client
+  console.log('[LE] Connecting to Let\'s Encrypt...');
   const client = new acme.Client({
     directoryUrl: acme.directory.letsencrypt.production,
     accountKey: accountKeyPem
   });
+  console.log('[LE] Registering account...');
+  await client.createAccount({ termsOfServiceAgreed: true });
+  console.log('[LE] Account registered');
 
-  // Track created records for cleanup
+  console.log('[LE] Creating order...');
+  const order = await client.createOrder({ identifiers: [{ type: 'dns', value: domain }] });
+  console.log('[LE] Order created');
+
+  const authorizations = await client.getAuthorizations(order);
   let createdRecordId = null;
 
-  const cert = await client.auto({
-    csr,
-    challengePriority: ['dns-01'],
-    termsOfServiceAgreed: true,
-    skipChallengeVerification: true,
-    challengeCreateFn: async (authz, challenge, keyAuthorization) => {
-      const fqdn = `_acme-challenge.${authz.identifier.value}`;
-      console.log(`[LE] Creating TXT record: ${fqdn}`);
-      createdRecordId = await createTxtRecord(zoneId, fqdn, keyAuthorization, cloudflareToken);
-      await waitForDns(fqdn, keyAuthorization);
-    },
-    challengeRemoveFn: async (authz) => {
-      if (createdRecordId) {
-        const fqdn = `_acme-challenge.${authz.identifier.value}`;
-        console.log(`[LE] Cleaning up TXT record: ${fqdn}`);
-        await deleteTxtRecord(zoneId, createdRecordId, cloudflareToken);
-        createdRecordId = null;
-      }
-    }
-  });
+  for (const authz of authorizations) {
+    const challenge = authz.challenges.find(c => c.type === 'dns-01');
+    if (!challenge) throw new Error('No dns-01 challenge offered');
+
+    const keyAuthorization = await client.getChallengeKeyAuthorization(challenge);
+    const fqdn = `_acme-challenge.${authz.identifier.value}`;
+
+    console.log(`[LE] Creating TXT record: ${fqdn}`);
+    createdRecordId = await createTxtRecord(zoneId, fqdn, keyAuthorization, cloudflareToken);
+    await waitForDns(fqdn, keyAuthorization);
+
+    console.log('[LE] Completing challenge...');
+    await client.completeChallenge(challenge);
+    await client.waitForValidStatus(challenge);
+    console.log('[LE] Challenge validated');
+
+    console.log(`[LE] Cleaning up TXT record: ${fqdn}`);
+    await deleteTxtRecord(zoneId, createdRecordId, cloudflareToken);
+    createdRecordId = null;
+  }
+
+  console.log('[LE] Finalizing order...');
+  await client.finalizeOrder(order, csr);
+  const cert = await client.getCertificate(order);
+  console.log('[LE] Certificate obtained');
 
   // Write files
   fs.writeFileSync(certPath, cert);

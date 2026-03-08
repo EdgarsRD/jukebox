@@ -404,7 +404,7 @@ app.post('/api/unban-request', (req, res) => {
 
 app.get('/admin/setup', (req, res) => {
   const cfg = loadConfig();
-  if (cfg.auth.passwordHash && !req.query.step) return res.redirect('/admin');
+  if (cfg.auth.passwordHash && !req.query.step && !req.query.resume) return res.redirect('/admin');
   res.sendFile(path.join(__dirname, 'admin', 'setup.html'));
 });
 
@@ -644,7 +644,17 @@ adminRouter.post('/api/letsencrypt-cert', async (req, res) => {
 // Restart server (to pick up new certs)
 adminRouter.post('/api/restart', (req, res) => {
   res.json({ success: true });
-  setTimeout(() => process.exit(1), 500);
+  setTimeout(() => {
+    const { spawn } = require('child_process');
+    const child = spawn(process.argv[0], process.argv.slice(1), {
+      cwd: process.cwd(),
+      detached: true,
+      stdio: 'inherit',
+      env: process.env
+    });
+    child.unref();
+    process.exit(0);
+  }, 500);
 });
 
 // Save rules

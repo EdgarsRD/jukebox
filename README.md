@@ -159,10 +159,13 @@ If the USB backup is lost or unavailable:
    curl -fsSL https://deb.nodesource.com/setup_18.x | sudo bash -
    sudo apt install -y nodejs
    ```
-2. Download the latest release from **[GitHub Releases](https://github.com/EdgarsRD/jukebox/releases/latest)**
+2. Download the latest release `.tar.gz` from **[GitHub Releases](https://github.com/EdgarsRD/jukebox/releases/latest)**
+   ```bash
+   curl -L -o jukebox-1.0.0.tar.gz https://github.com/EdgarsRD/jukebox/releases/download/v1.0.0/jukebox-1.0.0.tar.gz
+   ```
 3. Extract and run:
    ```bash
-   tar -xzf jukebox-*.tar.gz
+   tar -xzf jukebox-1.0.0.tar.gz
    cd jukebox-*/
    bash scripts/start.sh
    ```

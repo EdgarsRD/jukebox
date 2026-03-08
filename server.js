@@ -30,6 +30,7 @@ function loadConfig() {
     const defaults = {
       auth: { username: '', passwordHash: '' },
       network: { domain: '', localIp: '' },
+      cloudflare: { apiToken: '', accountKey: '', certType: '' },
       spotify: { clientId: '', clientSecret: '', refreshToken: '' },
       rules: { rateLimitMinutes: 5, maxQueueLength: 20, maxSongsPerDevice: 2 },
       moderation: { blockMode: 'silent', blockedDevices: [] }
@@ -585,6 +586,61 @@ adminRouter.post('/api/generate-cert', (req, res) => {
   });
 });
 
+// Validate Cloudflare API token
+adminRouter.post('/api/validate-cf-token', async (req, res) => {
+  const { cloudflareToken } = req.body;
+  const cfg = loadConfig();
+  const domain = cfg.network?.domain;
+  if (!domain) return res.status(400).json({ error: 'Configure domain first' });
+  if (!cloudflareToken) return res.status(400).json({ error: 'Cloudflare API token required' });
+
+  try {
+    const { validateToken } = require('./acme-cloudflare');
+    await validateToken(domain, cloudflareToken);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Request Let's Encrypt certificate via Cloudflare DNS-01
+adminRouter.post('/api/letsencrypt-cert', async (req, res) => {
+  const { cloudflareToken } = req.body;
+  const cfg = loadConfig();
+  const domain = cfg.network?.domain;
+  if (!domain) return res.status(400).json({ error: 'Configure domain first' });
+  if (!cloudflareToken) return res.status(400).json({ error: 'Cloudflare API token required' });
+
+  // Save token to config
+  if (!cfg.cloudflare) cfg.cloudflare = {};
+  cfg.cloudflare.apiToken = cloudflareToken;
+  saveConfig(cfg);
+
+  try {
+    const { obtainCertificate } = require('./acme-cloudflare');
+    const result = await obtainCertificate({
+      domain,
+      cloudflareToken,
+      certPath: path.join(__dirname, 'cert.pem'),
+      keyPath: path.join(__dirname, 'key.pem'),
+      accountKey: cfg.cloudflare.accountKey || null
+    });
+
+    // Save account key for renewal
+    const cfg2 = loadConfig();
+    if (!cfg2.cloudflare) cfg2.cloudflare = {};
+    cfg2.cloudflare.accountKey = result.accountKey;
+    cfg2.cloudflare.certType = 'letsencrypt';
+    cfg2.cloudflare.certObtainedAt = Date.now();
+    saveConfig(cfg2);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[LE] Certificate generation failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Restart server (to pick up new certs)
 adminRouter.post('/api/restart', (req, res) => {
   res.json({ success: true });
@@ -834,3 +890,42 @@ if (fs.existsSync(CERT_PATH) && fs.existsSync(KEY_PATH)) {
     console.log(`  Admin     : http://localhost:${PORT}/admin\n`);
   });
 }
+
+// ─── Auto-renewal for Let's Encrypt certs ─────────────────────────────────────
+
+function checkCertRenewal() {
+  try {
+    const cfg = loadConfig();
+    if (cfg.cloudflare?.certType !== 'letsencrypt' || !cfg.cloudflare?.apiToken) return;
+    if (!fs.existsSync(CERT_PATH)) return;
+
+    execFile('openssl', ['x509', '-enddate', '-noout', '-in', CERT_PATH], async (err, stdout) => {
+      if (err) return;
+      const match = stdout.match(/notAfter=(.+)/);
+      if (!match) return;
+      const expiresAt = new Date(match[1]);
+      const daysLeft = (expiresAt - Date.now()) / (1000 * 60 * 60 * 24);
+      console.log(`[LE] Certificate expires in ${Math.floor(daysLeft)} days`);
+      if (daysLeft < 30) {
+        console.log('[LE] Renewing certificate...');
+        try {
+          const { obtainCertificate } = require('./acme-cloudflare');
+          await obtainCertificate({
+            domain: cfg.network.domain,
+            cloudflareToken: cfg.cloudflare.apiToken,
+            certPath: CERT_PATH,
+            keyPath: KEY_PATH,
+            accountKey: cfg.cloudflare.accountKey || null
+          });
+          console.log('[LE] Certificate renewed. Restarting...');
+          process.exit(1);
+        } catch (e) {
+          console.error('[LE] Renewal failed:', e.message);
+        }
+      }
+    });
+  } catch {}
+}
+
+setTimeout(checkCertRenewal, 10000);
+setInterval(checkCertRenewal, 24 * 60 * 60 * 1000);

@@ -118,6 +118,7 @@
   .badge.disconnected::before { background: var(--red); }
   .badge.neutral { background: var(--accent-dim); color: var(--accent); }
   .badge.neutral::before { background: var(--accent); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 
   .info-box {
     background: var(--surface2);
@@ -290,19 +291,63 @@
   <!-- Step 4: SSL Certificate -->
   <div class="step" id="step-4">
     <div class="step-title">SSL Certificate</div>
-    <div class="step-desc">Generate a self-signed certificate for HTTPS. Required for Spotify OAuth on custom domains and secure patron connections.</div>
+    <div class="step-desc">Choose how to secure HTTPS connections for patrons.</div>
     <div id="cert-status-area" style="margin-bottom:16px">
       <span class="badge disconnected" id="cert-badge">No certificate</span>
     </div>
-    <div class="info-box" id="cert-info">
-      The certificate will cover:<br>
-      <code id="cert-domain-display">-</code>,
-      <code>localhost</code>,
-      <code>127.0.0.1</code>,
-      <code id="cert-ip-display">-</code>
-      <br><br>
-      Valid for 10 years. Patrons see a one-time "Not Secure" warning — they tap Advanced, then Proceed.
+
+    <!-- Cert mode toggle -->
+    <div style="display:flex;gap:10px;margin-bottom:16px">
+      <label style="flex:1;padding:12px;border:2px solid #444;border-radius:8px;cursor:pointer;text-align:center" id="mode-le-label">
+        <input type="radio" name="cert-mode" value="letsencrypt" id="mode-le" onchange="setCertMode('letsencrypt')" style="margin-right:6px">
+        <strong>Let's Encrypt</strong><br>
+        <small style="color:#aaa">Trusted cert, no warnings</small>
+      </label>
+      <label style="flex:1;padding:12px;border:2px solid #444;border-radius:8px;cursor:pointer;text-align:center" id="mode-ss-label">
+        <input type="radio" name="cert-mode" value="selfsigned" id="mode-ss" onchange="setCertMode('selfsigned')" style="margin-right:6px">
+        <strong>Self-signed</strong><br>
+        <small style="color:#aaa">Quick, browsers show warning</small>
+      </label>
     </div>
+
+    <!-- Let's Encrypt section -->
+    <div id="le-section" style="display:none">
+      <div class="info-box">
+        Uses Cloudflare DNS to prove domain ownership. Your server does <strong>not</strong> need to be publicly accessible.<br><br>
+        <strong>Create a Cloudflare API token:</strong><br>
+        1. Go to <code>dash.cloudflare.com</code> &rarr; your domain &rarr; API Tokens<br>
+        2. Create token with <strong>Zone : DNS : Edit</strong> permission
+      </div>
+      <div class="field-group" style="margin-top:12px">
+        <label>Cloudflare API Token</label>
+        <div class="field-inline">
+          <input type="password" id="cf-token" placeholder="Paste your API token" style="flex:1" />
+          <button class="btn btn-secondary" onclick="validateCfToken()" id="cf-validate-btn" style="padding:11px 14px">Validate</button>
+        </div>
+      </div>
+      <p class="error" id="cf-error" style="display:none"></p>
+      <p class="success-msg" id="cf-success" style="display:none"></p>
+      <div id="le-progress" style="display:none;margin:12px 0">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="badge" style="background:#f59e0b;animation:pulse 1.5s infinite" id="le-progress-badge">Working</span>
+          <span id="le-progress-text">Setting up DNS challenge...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Self-signed section -->
+    <div id="ss-section" style="display:none">
+      <div class="info-box" id="cert-info">
+        The certificate will cover:<br>
+        <code id="cert-domain-display">-</code>,
+        <code>localhost</code>,
+        <code>127.0.0.1</code>,
+        <code id="cert-ip-display">-</code>
+        <br><br>
+        Valid for 10 years. Patrons see a one-time "Not Secure" warning — they tap Advanced, then Proceed.
+      </div>
+    </div>
+
     <p class="error" id="cert-error"></p>
     <p class="success-msg" id="cert-success"></p>
     <div id="cert-restart-area" style="display:none">
@@ -318,7 +363,7 @@
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="showStep(3)">Back</button>
       <button class="btn btn-skip" onclick="showStep(5)">Skip</button>
-      <button class="btn btn-primary" id="cert-btn" onclick="generateCert()">Generate Certificate</button>
+      <button class="btn btn-primary" id="cert-btn" onclick="handleCertGenerate()">Request Certificate</button>
       <button class="btn btn-primary" id="restart-btn" style="display:none" onclick="restartServer()">Restart Server</button>
     </div>
   </div>
@@ -622,6 +667,17 @@
 
   // ── Step 4: SSL Certificate ──
 
+  let certMode = 'letsencrypt';
+
+  function setCertMode(mode) {
+    certMode = mode;
+    document.getElementById('le-section').style.display = mode === 'letsencrypt' ? 'block' : 'none';
+    document.getElementById('ss-section').style.display = mode === 'selfsigned' ? 'block' : 'none';
+    document.getElementById('mode-le-label').style.borderColor = mode === 'letsencrypt' ? '#22c55e' : '#444';
+    document.getElementById('mode-ss-label').style.borderColor = mode === 'selfsigned' ? '#22c55e' : '#444';
+    document.getElementById('cert-btn').textContent = mode === 'letsencrypt' ? 'Request Certificate' : 'Generate Certificate';
+  }
+
   async function loadCertStep() {
     try {
       const r = await fetch('/admin/setup/network-info');
@@ -642,9 +698,133 @@
       // Update redirect URI on Spotify step
       document.getElementById('sp-redirect-uri').textContent = d.redirectUri;
     } catch {}
+
+    // Default to Let's Encrypt
+    document.getElementById('mode-le').checked = true;
+    setCertMode('letsencrypt');
   }
 
-  async function generateCert() {
+  async function validateCfToken() {
+    const token = document.getElementById('cf-token').value.trim();
+    const errEl = document.getElementById('cf-error');
+    const successEl = document.getElementById('cf-success');
+    errEl.style.display = 'none';
+    successEl.style.display = 'none';
+
+    if (!token) { errEl.textContent = 'Paste your API token'; errEl.style.display = 'block'; return; }
+
+    const btn = document.getElementById('cf-validate-btn');
+    btn.disabled = true;
+    btn.textContent = 'Checking...';
+
+    try {
+      const r = await fetch('/admin/api/validate-cf-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+        body: JSON.stringify({ cloudflareToken: token })
+      });
+      if (!r.ok) {
+        const d = await r.json();
+        throw new Error(d.error || 'Validation failed');
+      }
+      successEl.textContent = 'Token valid — DNS access confirmed';
+      successEl.style.display = 'block';
+      btn.textContent = 'Valid';
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Validate';
+    }
+  }
+
+  function handleCertGenerate() {
+    if (certMode === 'letsencrypt') {
+      requestLetsEncryptCert();
+    } else {
+      generateSelfSignedCert();
+    }
+  }
+
+  async function requestLetsEncryptCert() {
+    const token = document.getElementById('cf-token').value.trim();
+    const errEl = document.getElementById('cert-error');
+    const successEl = document.getElementById('cert-success');
+    errEl.style.display = 'none';
+    successEl.style.display = 'none';
+
+    if (!token) {
+      const cfErr = document.getElementById('cf-error');
+      cfErr.textContent = 'Paste your Cloudflare API token first';
+      cfErr.style.display = 'block';
+      return;
+    }
+
+    const btn = document.getElementById('cert-btn');
+    btn.disabled = true;
+    btn.style.display = 'none';
+
+    // Show progress
+    const progress = document.getElementById('le-progress');
+    const progressText = document.getElementById('le-progress-text');
+    progress.style.display = 'block';
+
+    // Cycle through progress phases
+    const phases = [
+      { text: 'Setting up DNS challenge...', delay: 0 },
+      { text: 'Waiting for DNS propagation...', delay: 8000 },
+      { text: 'Requesting certificate from Let\'s Encrypt...', delay: 60000 }
+    ];
+    const timers = [];
+    phases.forEach(p => {
+      timers.push(setTimeout(() => { progressText.textContent = p.text; }, p.delay));
+    });
+
+    try {
+      const r = await fetch('/admin/api/letsencrypt-cert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+        body: JSON.stringify({ cloudflareToken: token }),
+        signal: AbortSignal.timeout(180000)
+      });
+      timers.forEach(clearTimeout);
+      progress.style.display = 'none';
+
+      if (!r.ok) {
+        const d = await r.json();
+        throw new Error(d.error || 'Certificate request failed');
+      }
+
+      certGenerated = true;
+      const badge = document.getElementById('cert-badge');
+      badge.className = 'badge connected';
+      badge.textContent = 'Let\'s Encrypt certificate';
+
+      successEl.textContent = 'Trusted certificate obtained from Let\'s Encrypt';
+      successEl.style.display = 'block';
+
+      if (networkInfo.protocol === 'http') {
+        const domain = networkInfo.domain || 'localhost';
+        const port = location.port || '3000';
+        const newUrl = `https://${domain}:${port}/admin/setup?resume=1`;
+        document.getElementById('new-url').textContent = newUrl;
+        document.getElementById('cert-restart-area').style.display = 'block';
+        document.getElementById('restart-btn').style.display = 'inline-flex';
+      } else {
+        setTimeout(() => showStep(5), 800);
+      }
+    } catch (e) {
+      timers.forEach(clearTimeout);
+      progress.style.display = 'none';
+      errEl.textContent = e.message;
+      errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.style.display = 'inline-flex';
+      btn.textContent = 'Request Certificate';
+    }
+  }
+
+  async function generateSelfSignedCert() {
     const errEl = document.getElementById('cert-error');
     const successEl = document.getElementById('cert-success');
     errEl.style.display = 'none';
@@ -663,18 +843,16 @@
         const d = await r.json();
         throw new Error(d.error || 'Generation failed');
       }
-      const d = await r.json();
       certGenerated = true;
 
       const badge = document.getElementById('cert-badge');
       badge.className = 'badge connected';
-      badge.textContent = 'Certificate generated';
+      badge.textContent = 'Self-signed certificate';
 
-      successEl.textContent = 'Certificate generated successfully (valid 10 years)';
+      successEl.textContent = 'Certificate generated (valid 10 years)';
       successEl.style.display = 'block';
       btn.style.display = 'none';
 
-      // Show restart area if server is currently HTTP
       if (networkInfo.protocol === 'http') {
         const port = location.port || '3000';
         const newUrl = `https://localhost:${port}/admin/setup?resume=1`;
@@ -682,7 +860,6 @@
         document.getElementById('cert-restart-area').style.display = 'block';
         document.getElementById('restart-btn').style.display = 'inline-flex';
       } else {
-        // Already HTTPS, just continue
         setTimeout(() => showStep(5), 800);
       }
     } catch (e) {

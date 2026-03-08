@@ -235,7 +235,8 @@ app.get('/api/top-songs', (req, res) => {
   for (const h of history) {
     if (h.addedAt < cutoff) continue;
     const key = `${h.title}|||${h.artist}`;
-    if (!counts[key]) counts[key] = { title: h.title, artist: h.artist, albumArt: h.albumArt, count: 0 };
+    if (!counts[key]) counts[key] = { title: h.title, artist: h.artist, albumArt: h.albumArt, uri: h.uri || '', count: 0 };
+    if (!counts[key].uri && h.uri) counts[key].uri = h.uri;
     counts[key].count++;
   }
   const top = Object.values(counts).sort((a, b) => b.count - a.count).slice(0, 5);
@@ -334,6 +335,7 @@ app.post('/api/queue', async (req, res) => {
       fingerprint: fp,
       fingerprintShort: crypto.createHash('sha256').update(fp).digest('hex').slice(0, 8),
       device,
+      uri,
       title,
       artist,
       albumArt,

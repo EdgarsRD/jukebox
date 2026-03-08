@@ -178,6 +178,14 @@
   .top-title { font-size: 0.85rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .top-artist { font-size: 0.75rem; color: var(--muted); }
   .top-count { font-size: 0.72rem; color: var(--muted); flex-shrink: 0; }
+  .top-add {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent); border: none; color: #0a0a0a;
+    font-size: 1.1rem; font-weight: 700; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; transition: transform 0.15s; line-height: 1;
+  }
+  .top-add:active { transform: scale(0.88); }
 
   /* ── Queue ── */
   .section-card {
@@ -526,6 +534,39 @@
   }
 
   // ── Top Songs ──
+  document.getElementById('top-songs').addEventListener('click', async (e) => {
+    const btn = e.target.closest('.top-add');
+    if (!btn) return;
+    const item = btn.closest('.top-item');
+    btn.textContent = '…';
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uri: item.dataset.uri,
+          title: item.dataset.title,
+          artist: item.dataset.artist,
+          albumArt: item.dataset.art
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message, 'success');
+        loadQueue();
+      } else if (data.blocked) {
+        showBlockedUI(data.pending);
+      } else {
+        showToast(data.error || 'Failed to add song', 'error');
+      }
+    } catch {
+      showToast('Network error', 'error');
+    }
+    btn.textContent = '+';
+    btn.disabled = false;
+  });
+
   async function loadTopSongs() {
     try {
       const r = await fetch('/api/top-songs');
@@ -534,7 +575,7 @@
       if (!d.songs.length) { el.innerHTML = ''; return; }
       el.innerHTML = '<div class="section-card"><div class="section-label">Popular This Month</div>' +
         d.songs.map((s, i) => `
-          <div class="top-item">
+          <div class="top-item" data-uri="${escHtml(s.uri || '')}" data-title="${escHtml(s.title)}" data-artist="${escHtml(s.artist)}" data-art="${escHtml(s.albumArt)}">
             <span class="top-rank">${i + 1}</span>
             <img class="top-art" src="${s.albumArt}" alt="" loading="lazy" />
             <div class="top-info">
@@ -542,6 +583,7 @@
               <div class="top-artist">${escHtml(s.artist)}</div>
             </div>
             <span class="top-count">${s.count}×</span>
+            ${s.uri ? `<button class="top-add" aria-label="Add to queue">+</button>` : ''}
           </div>
         `).join('') + '</div>';
     } catch {}

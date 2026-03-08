@@ -145,7 +145,7 @@ If you have the USB stick with the jukebox folder:
    ```
 3. Follow prompts — installs service, starts server
 4. Open `http://localhost:3000/admin` to verify or reconfigure
-5. Update the router's DNS record to point your domain at the new machine's IP
+5. Set up networking — see [Production Setup](#production-setup) steps 1 (static IP) and 4 (router DNS)
 
 > `config.json`, `cert.pem`, and `key.pem` travel on the USB —
 > Spotify auth, password, and rules are all preserved.
@@ -170,7 +170,7 @@ If the USB backup is lost or unavailable:
    bash scripts/start.sh
    ```
 4. Open `http://localhost:3000/admin` — the setup wizard walks you through everything
-5. Update the router's DNS record to point your domain at the new machine's IP
+5. Set up networking — see [Production Setup](#production-setup) steps 1 (static IP) and 4 (router DNS)
 
 > Config will need to be re-entered (admin account, Spotify credentials, rules) since there's no USB backup. The wizard handles all of it.
 

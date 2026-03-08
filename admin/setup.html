@@ -274,8 +274,8 @@
       <strong>After setup, configure your router:</strong><br><br>
       <strong>DD-WRT / DNSMasq:</strong><br>
       <code id="dns-preview">address=/domain/ip</code><br><br>
-      <strong>Or add to each device's /etc/hosts:</strong><br>
-      <code id="hosts-preview">ip domain</code><br><br>
+      <strong>Or paste into terminal on each device:</strong><br>
+      <code id="hosts-preview">echo 'ip  domain' | sudo tee -a /etc/hosts</code><br><br>
       This makes <code id="domain-preview">your-domain</code> resolve to this machine on the local network.
     </div>
     <p class="error" id="domain-error"></p>
@@ -562,7 +562,7 @@
     const domain = document.getElementById('domain').value.trim() || 'your-domain';
     const ip = document.getElementById('local-ip').value.trim() || 'x.x.x.x';
     document.getElementById('dns-preview').textContent = `address=/${domain}/${ip}`;
-    document.getElementById('hosts-preview').textContent = `${ip}  ${domain}`;
+    document.getElementById('hosts-preview').textContent = `echo '${ip}  ${domain}' | sudo tee -a /etc/hosts`;
     document.getElementById('domain-preview').textContent = domain;
   }
 

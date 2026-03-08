@@ -1,6 +1,6 @@
 {
   "name": "jukebox",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Bar jukebox — patron song request queue via Spotify",
   "main": "server.js",
   "scripts": {

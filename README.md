@@ -132,7 +132,11 @@ On the bar machine, staff runs the "Update Jukebox" shortcut (or `bash update.sh
 
 ---
 
-## USB Recovery (machine died)
+## Emergency Recovery (machine died)
+
+### Option A — USB backup (fastest)
+
+If you have the USB stick with the jukebox folder:
 
 1. Plug USB into any spare Ubuntu machine
 2. Run:
@@ -142,10 +146,30 @@ On the bar machine, staff runs the "Update Jukebox" shortcut (or `bash update.sh
 3. Follow prompts — installs service, starts server
 4. Open `http://localhost:3000/admin` to verify or reconfigure
 5. Update the router's DNS record to point your domain at the new machine's IP
-6. Back up in minutes
 
 > `config.json`, `cert.pem`, and `key.pem` travel on the USB —
 > Spotify auth, password, and rules are all preserved.
+
+### Option B — Fresh machine from GitHub (no USB)
+
+If the USB backup is lost or unavailable:
+
+1. Install Node.js 18+ on the new machine:
+   ```bash
+   curl -fsSL https://deb.nodesource.com/setup_18.x | sudo bash -
+   sudo apt install -y nodejs
+   ```
+2. Download the latest release from **[GitHub Releases](https://github.com/EdgarsRD/jukebox/releases/latest)**
+3. Extract and run:
+   ```bash
+   tar -xzf jukebox-*.tar.gz
+   cd jukebox-*/
+   bash scripts/start.sh
+   ```
+4. Open `http://localhost:3000/admin` — the setup wizard walks you through everything
+5. Update the router's DNS record to point your domain at the new machine's IP
+
+> Config will need to be re-entered (admin account, Spotify credentials, rules) since there's no USB backup. The wizard handles all of it.
 
 ---
 

@@ -855,7 +855,8 @@
 
       if (networkInfo.protocol === 'http') {
         const port = location.port || '3000';
-        const newUrl = `https://localhost:${port}/admin/setup?resume=1`;
+        const domain = networkInfo.domain || 'localhost';
+        const newUrl = `https://${domain}:${port}/admin/setup?resume=1`;
         document.getElementById('new-url').textContent = newUrl;
         document.getElementById('cert-restart-area').style.display = 'block';
         document.getElementById('restart-btn').style.display = 'inline-flex';
@@ -872,7 +873,8 @@
 
   async function restartServer() {
     const port = location.port || '3000';
-    const resumeUrl = `https://localhost:${port}/admin/setup?resume=1`;
+    const domain = networkInfo.domain || 'localhost';
+    const resumeUrl = `https://${domain}:${port}/admin/setup?resume=1`;
 
     try {
       await fetch('/admin/api/restart', {
@@ -907,7 +909,7 @@
         return;
       }
       try {
-        const r = await fetch(`https://localhost:${port}/admin/setup/network-info`, {
+        const r = await fetch(`https://${domain}:${port}/admin/setup/network-info`, {
           signal: AbortSignal.timeout(2000)
         });
         if (r.ok) {

@@ -71,5 +71,16 @@ else
   echo "→  Starting server manually (runs in foreground)..."
   echo "   Press Ctrl+C to stop."
   echo ""
-  cd "$PROJECT_DIR" && node server.js
+  cd "$PROJECT_DIR"
+  trap 'echo ""; echo "Server stopped."; exit 0' INT TERM
+  while true; do
+    node server.js
+    EXIT_CODE=$?
+    if [ $EXIT_CODE -eq 0 ]; then
+      break
+    fi
+    echo ""
+    echo "→  Server exited (code $EXIT_CODE), restarting in 2s..."
+    sleep 2
+  done
 fi

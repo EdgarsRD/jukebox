@@ -341,6 +341,14 @@
     <!-- ── Security section ── -->
     <div class="section" id="section-security">
       <div class="section-title">Security</div>
+
+      <div class="card">
+        <div class="card-title">Trusted Devices</div>
+        <p class="info-text" style="margin-bottom:16px">Trusted devices get superadmin access without entering a password. Based on IP + browser fingerprint — use only on trusted networks.</p>
+        <button class="btn btn-primary" onclick="trustDevice()" style="margin-bottom:16px">Trust This Device</button>
+        <div id="trusted-devices-list"><div class="empty-state">No trusted devices</div></div>
+      </div>
+
       <div class="card">
         <div class="card-title">Change Admin Password</div>
         <div class="field" style="max-width:320px">
@@ -353,6 +361,19 @@
         </div>
         <button class="btn btn-primary" onclick="changePassword()">Update Password</button>
         <p class="info-text" style="margin-top:12px">After changing the password, your browser will prompt you to re-enter credentials.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Change Superadmin Password</div>
+        <div class="field" style="max-width:320px">
+          <label>New Password</label>
+          <input type="password" id="new-sa-password" placeholder="Min. 6 characters" />
+        </div>
+        <div class="field" style="max-width:320px">
+          <label>Confirm Password</label>
+          <input type="password" id="confirm-sa-password" placeholder="Repeat new password" />
+        </div>
+        <button class="btn btn-primary" onclick="changeSuperadminPassword()">Update Superadmin Password</button>
       </div>
     </div>
 
@@ -379,7 +400,15 @@
     document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
     document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
     document.getElementById('section-' + id).classList.add('active');
+    if (['branding', 'moderation', 'security'].includes(id) && authRole !== 'superadmin') {
+      id = 'queue';
+      document.getElementById('section-queue').classList.add('active');
+      document.querySelector('[data-section="queue"]').classList.add('active');
+      window.location.hash = 'queue';
+      return;
+    }
     if (id === 'moderation') { loadUnbanRequests(); loadHistory(); loadBlocked(); }
+    if (id === 'security') { loadTrustedDevices(); }
     document.querySelector(`[data-section="${id}"]`).classList.add('active');
     window.location.hash = id;
   }
@@ -672,6 +701,77 @@
     }
   }
 
+  // ── Auth role ──
+  let authRole = 'admin';
+
+  async function loadAuthRole() {
+    try {
+      const r = await fetch('/admin/api/auth/role');
+      const d = await r.json();
+      authRole = d.role;
+      const superadminSections = ['branding', 'moderation', 'security'];
+      if (authRole !== 'superadmin') {
+        superadminSections.forEach(sec => {
+          const link = document.querySelector(`[data-section="${sec}"]`);
+          if (link) link.style.display = 'none';
+        });
+      }
+    } catch {}
+  }
+
+  // ── Trusted devices ──
+  async function loadTrustedDevices() {
+    try {
+      const r = await fetch('/admin/api/trusted-devices');
+      const d = await r.json();
+      const list = document.getElementById('trusted-devices-list');
+      if (!d.devices.length) { list.innerHTML = '<div class="empty-state">No trusted devices</div>'; return; }
+      list.innerHTML = d.devices.map(dev => `
+        <div class="queue-row" style="flex-wrap:wrap;gap:8px">
+          <div class="q-info" style="flex:1;min-width:180px">
+            <div class="q-title">${escHtml(dev.label)} <span style="opacity:0.4">${dev.shortId}</span></div>
+            <div class="q-artist" style="opacity:0.5">${new Date(dev.trustedAt).toLocaleString()}</div>
+          </div>
+          <button class="btn btn-danger" style="font-size:0.78rem;padding:5px 10px" onclick="revokeTrust('${dev.shortId}')">Revoke</button>
+        </div>
+      `).join('');
+    } catch {}
+  }
+
+  async function trustDevice() {
+    const r = await fetch('/admin/api/trusted-devices', { method: 'POST' });
+    const d = await r.json();
+    if (d.success) {
+      toast(d.message || 'Device trusted', 'success');
+      loadTrustedDevices();
+    } else {
+      toast(d.error, 'error');
+    }
+  }
+
+  async function revokeTrust(shortId) {
+    const r = await fetch(`/admin/api/trusted-devices/${shortId}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (d.success) { toast('Trust revoked', 'success'); loadTrustedDevices(); }
+    else toast(d.error, 'error');
+  }
+
+  // ── Superadmin password ──
+  async function changeSuperadminPassword() {
+    const pw = document.getElementById('new-sa-password').value;
+    const confirm = document.getElementById('confirm-sa-password').value;
+    if (pw !== confirm) return toast('Passwords do not match', 'error');
+    if (pw.length < 6) return toast('Password too short', 'error');
+    const r = await fetch('/admin/api/superadmin-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newPassword: pw })
+    });
+    const d = await r.json();
+    if (d.success) { toast('Superadmin password updated', 'success'); }
+    else toast(d.error, 'error');
+  }
+
   // ── Utils ──
   function escHtml(str) {
     return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -854,6 +954,7 @@
   }
 
   // ── Init ──
+  loadAuthRole();
   loadConfig();
   loadAdminQueue();
   loadNowPlaying();

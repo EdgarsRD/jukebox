@@ -221,7 +221,7 @@
     <div class="step-title">Welcome</div>
     <div class="step-desc">This wizard will walk you through complete jukebox setup — from zero to ready.</div>
     <ul class="checklist">
-      <li><span class="check-icon">1.</span> Create admin account</li>
+      <li><span class="check-icon">1.</span> Create admin & superadmin accounts</li>
       <li><span class="check-icon">2.</span> Configure domain & network</li>
       <li><span class="check-icon">3.</span> Generate SSL certificate</li>
       <li><span class="check-icon">4.</span> Connect Spotify</li>
@@ -232,27 +232,41 @@
     </div>
   </div>
 
-  <!-- Step 2: Admin Account -->
+  <!-- Step 2: Admin & Superadmin Accounts -->
   <div class="step" id="step-2">
-    <div class="step-title">Admin Account</div>
-    <div class="step-desc">Create your admin login. You'll use this to manage the jukebox.</div>
+    <div class="step-title">Accounts</div>
+    <div class="step-desc">Create two access levels. <strong>Admin</strong> can manage queue, Spotify, and rules. <strong>Superadmin</strong> can additionally manage branding, security, moderation, and trusted devices.</div>
     <div class="field">
-      <label>Username</label>
+      <label>Username (shared for both)</label>
       <input type="text" id="username" placeholder="Choose a username" autocomplete="username" />
     </div>
-    <div class="field">
-      <label>Password</label>
-      <input type="password" id="pw" placeholder="Choose a strong password" />
+    <div style="border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px">
+      <div style="font-size:0.78rem;color:var(--muted);letter-spacing:0.04em;margin-bottom:12px;text-transform:uppercase">Admin Password</div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="pw" placeholder="Admin password" />
+      </div>
+      <div class="field" style="margin-bottom:0">
+        <label>Confirm Password</label>
+        <input type="password" id="cpw" placeholder="Repeat admin password" />
+      </div>
     </div>
-    <div class="field">
-      <label>Confirm Password</label>
-      <input type="password" id="cpw" placeholder="Repeat password" />
+    <div style="border:1px solid var(--accent);border-radius:8px;padding:16px;margin-bottom:16px;background:rgba(232,197,90,0.04)">
+      <div style="font-size:0.78rem;color:var(--accent);letter-spacing:0.04em;margin-bottom:12px;text-transform:uppercase">Superadmin Password</div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="sapw" placeholder="Superadmin password" />
+      </div>
+      <div class="field" style="margin-bottom:0">
+        <label>Confirm Password</label>
+        <input type="password" id="csapw" placeholder="Repeat superadmin password" />
+      </div>
     </div>
     <p class="error" id="pw-error"></p>
-    <p class="success-msg" id="pw-success">Account created successfully</p>
+    <p class="success-msg" id="pw-success">Accounts created successfully</p>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="showStep(1)">Back</button>
-      <button class="btn btn-primary" id="pw-btn" onclick="setPassword()">Create Account</button>
+      <button class="btn btn-primary" id="pw-btn" onclick="setPassword()">Create Accounts</button>
     </div>
   </div>
 
@@ -433,7 +447,7 @@
 
     <div id="summary">
       <div class="summary-item">
-        <span class="summary-label">Admin account</span>
+        <span class="summary-label">Admin & Superadmin</span>
         <span class="summary-value" id="sum-password">-</span>
       </div>
       <div class="summary-item">
@@ -528,6 +542,8 @@
     const username = document.getElementById('username').value.trim();
     const pw = document.getElementById('pw').value;
     const cpw = document.getElementById('cpw').value;
+    const sapw = document.getElementById('sapw').value;
+    const csapw = document.getElementById('csapw').value;
     const errEl = document.getElementById('pw-error');
     const successEl = document.getElementById('pw-success');
     errEl.style.display = 'none';
@@ -539,12 +555,27 @@
       return;
     }
     if (!pw || pw.length < 6) {
-      errEl.textContent = 'Password must be at least 6 characters';
+      errEl.textContent = 'Admin password must be at least 6 characters';
       errEl.style.display = 'block';
       return;
     }
     if (pw !== cpw) {
-      errEl.textContent = 'Passwords do not match';
+      errEl.textContent = 'Admin passwords do not match';
+      errEl.style.display = 'block';
+      return;
+    }
+    if (!sapw || sapw.length < 6) {
+      errEl.textContent = 'Superadmin password must be at least 6 characters';
+      errEl.style.display = 'block';
+      return;
+    }
+    if (sapw !== csapw) {
+      errEl.textContent = 'Superadmin passwords do not match';
+      errEl.style.display = 'block';
+      return;
+    }
+    if (pw === sapw) {
+      errEl.textContent = 'Admin and superadmin passwords must be different';
       errEl.style.display = 'block';
       return;
     }
@@ -557,13 +588,17 @@
       const r = await fetch('/admin/setup/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password: pw, confirm: cpw })
+        body: JSON.stringify({
+          username,
+          password: pw, confirm: cpw,
+          superadminPassword: sapw, superadminConfirm: csapw
+        })
       });
       if (!r.ok) {
         const text = await r.text();
-        throw new Error(text || 'Failed to create account');
+        throw new Error(text || 'Failed to create accounts');
       }
-      sessionStorage.setItem('jukebox_setup_pw', pw);
+      sessionStorage.setItem('jukebox_setup_pw', sapw);
       sessionStorage.setItem('jukebox_setup_user', username);
       passwordSet = true;
       successEl.style.display = 'block';
@@ -573,7 +608,7 @@
       errEl.textContent = e.message;
       errEl.style.display = 'block';
       btn.disabled = false;
-      btn.textContent = 'Create Account';
+      btn.textContent = 'Create Accounts';
     }
   }
 

@@ -28,7 +28,7 @@ const HISTORY_PATH = path.join(__dirname, 'history.json');
 function loadConfig() {
   if (!fs.existsSync(CONFIG_PATH)) {
     const defaults = {
-      auth: { username: '', passwordHash: '' },
+      auth: { username: '', passwordHash: '', superadminPasswordHash: '', trustedDevices: [] },
       network: { domain: '', localIp: '' },
       cloudflare: { apiToken: '', accountKey: '', certType: '' },
       spotify: { clientId: '', clientSecret: '', refreshToken: '' },
@@ -175,6 +175,43 @@ async function spotifyRequest(method, endpoint, data = null) {
 
 // ─── Admin auth middleware ────────────────────────────────────────────────────
 
+async function resolveAuthRole(req, cfg) {
+  // 1. Check fingerprint trust (superadmin shortcut)
+  const fp = getFingerprint(req);
+  const trustedDevices = cfg.auth.trustedDevices || [];
+  if (trustedDevices.some(d => d.fingerprint === fp)) {
+    return 'superadmin';
+  }
+
+  // 2. Fall back to Basic Auth
+  const authHeader = req.headers['authorization'];
+  if (!authHeader || !authHeader.startsWith('Basic ')) return null;
+
+  const decoded = Buffer.from(authHeader.slice(6), 'base64').toString('utf8');
+  const colonIdx = decoded.indexOf(':');
+  if (colonIdx === -1) return null;
+  const username = decoded.slice(0, colonIdx);
+  const password = decoded.slice(colonIdx + 1);
+  const expectedUser = cfg.auth.username || 'admin';
+  if (username !== expectedUser) return null;
+
+  // Check superadmin password first
+  if (cfg.auth.superadminPasswordHash) {
+    const isSuperadmin = await bcrypt.compare(password, cfg.auth.superadminPasswordHash);
+    if (isSuperadmin) return 'superadmin';
+  }
+
+  // Check admin password
+  const isAdmin = await bcrypt.compare(password, cfg.auth.passwordHash);
+  if (isAdmin) {
+    // If no superadmin password set yet, admin gets superadmin (migration)
+    if (!cfg.auth.superadminPasswordHash) return 'superadmin';
+    return 'admin';
+  }
+
+  return null;
+}
+
 function adminAuth(req, res, next) {
   const cfg = loadConfig();
 
@@ -184,28 +221,24 @@ function adminAuth(req, res, next) {
     return res.redirect('/admin/setup');
   }
 
-  // Basic Auth check
-  const authHeader = req.headers['authorization'];
-  if (!authHeader || !authHeader.startsWith('Basic ')) {
-    res.set('WWW-Authenticate', 'Basic realm="Jukebox Admin"');
-    return res.status(401).send('Authentication required');
-  }
+  // Setup routes use their own auth via sessionStorage
+  if (req.path.startsWith('/setup')) return next();
 
-  const decoded = Buffer.from(authHeader.slice(6), 'base64').toString('utf8');
-  const [username, password] = decoded.split(':');
-  const expectedUser = cfg.auth.username || 'admin';
-  if (username !== expectedUser) {
-    res.set('WWW-Authenticate', 'Basic realm="Jukebox Admin"');
-    return res.status(401).send('Invalid credentials');
-  }
-
-  bcrypt.compare(password, cfg.auth.passwordHash).then(match => {
-    if (!match) {
+  resolveAuthRole(req, cfg).then(role => {
+    if (!role) {
       res.set('WWW-Authenticate', 'Basic realm="Jukebox Admin"');
-      return res.status(401).send('Invalid credentials');
+      return res.status(401).send('Authentication required');
     }
+    req.authRole = role;
     next();
   });
+}
+
+function requireSuperadmin(req, res, next) {
+  if (req.authRole !== 'superadmin') {
+    return res.status(403).json({ error: 'Superadmin access required' });
+  }
+  next();
 }
 
 // ─── Public routes ────────────────────────────────────────────────────────────
@@ -444,20 +477,32 @@ app.get('/admin/setup', (req, res) => {
 app.post('/admin/setup/save', async (req, res) => {
   const cfg = loadConfig();
   if (cfg.auth.passwordHash) return res.status(400).send('Password already set');
-  const { username, password, confirm } = req.body;
+  const { username, password, confirm, superadminPassword, superadminConfirm } = req.body;
   if (!username || !username.trim()) {
     return res.status(400).send('Username is required');
   }
   if (!password || password !== confirm) {
-    return res.status(400).send('Passwords do not match');
+    return res.status(400).send('Admin passwords do not match');
   }
   if (password.length < 6) {
-    return res.status(400).send('Password must be at least 6 characters');
+    return res.status(400).send('Admin password must be at least 6 characters');
   }
-  const hash = await bcrypt.hash(password, 12);
+  if (!superadminPassword || superadminPassword !== superadminConfirm) {
+    return res.status(400).send('Superadmin passwords do not match');
+  }
+  if (superadminPassword.length < 6) {
+    return res.status(400).send('Superadmin password must be at least 6 characters');
+  }
+  if (password === superadminPassword) {
+    return res.status(400).send('Admin and superadmin passwords must be different');
+  }
+  const adminHash = await bcrypt.hash(password, 12);
+  const superHash = await bcrypt.hash(superadminPassword, 12);
   const cfg2 = loadConfig();
   cfg2.auth.username = username.trim();
-  cfg2.auth.passwordHash = hash;
+  cfg2.auth.passwordHash = adminHash;
+  cfg2.auth.superadminPasswordHash = superHash;
+  cfg2.auth.trustedDevices = cfg2.auth.trustedDevices || [];
   saveConfig(cfg2);
   res.json({ success: true });
 });
@@ -520,8 +565,49 @@ adminRouter.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin', 'index.html'));
 });
 
-// Change password
-adminRouter.post('/api/password', async (req, res) => {
+// Auth role
+adminRouter.get('/api/auth/role', (req, res) => {
+  res.json({ role: req.authRole });
+});
+
+// Trusted devices (superadmin only)
+adminRouter.get('/api/trusted-devices', requireSuperadmin, (req, res) => {
+  const cfg = loadConfig();
+  const devices = (cfg.auth.trustedDevices || []).map(d => ({
+    shortId: crypto.createHash('sha256').update(d.fingerprint).digest('hex').slice(0, 8),
+    label: d.label,
+    trustedAt: d.trustedAt
+  }));
+  res.json({ devices });
+});
+
+adminRouter.post('/api/trusted-devices', requireSuperadmin, (req, res) => {
+  const fp = getFingerprint(req);
+  const cfg = loadConfig();
+  if (!cfg.auth.trustedDevices) cfg.auth.trustedDevices = [];
+  if (cfg.auth.trustedDevices.some(d => d.fingerprint === fp)) {
+    return res.json({ success: true, message: 'Device already trusted' });
+  }
+  const device = getDeviceInfo(req);
+  const label = [device.mobile ? 'Mobile' : 'Desktop', device.os, device.browser].filter(Boolean).join(' / ');
+  cfg.auth.trustedDevices.push({ fingerprint: fp, label, trustedAt: Date.now() });
+  saveConfig(cfg);
+  res.json({ success: true });
+});
+
+adminRouter.delete('/api/trusted-devices/:shortId', requireSuperadmin, (req, res) => {
+  const cfg = loadConfig();
+  if (!cfg.auth.trustedDevices) return res.json({ success: true });
+  cfg.auth.trustedDevices = cfg.auth.trustedDevices.filter(d => {
+    const sid = crypto.createHash('sha256').update(d.fingerprint).digest('hex').slice(0, 8);
+    return sid !== req.params.shortId;
+  });
+  saveConfig(cfg);
+  res.json({ success: true });
+});
+
+// Change admin password
+adminRouter.post('/api/password', requireSuperadmin, async (req, res) => {
   const { newPassword } = req.body;
   if (!newPassword || newPassword.length < 6) {
     return res.status(400).json({ error: 'Password must be at least 6 characters' });
@@ -529,6 +615,24 @@ adminRouter.post('/api/password', async (req, res) => {
   const hash = await bcrypt.hash(newPassword, 12);
   const cfg = loadConfig();
   cfg.auth.passwordHash = hash;
+  saveConfig(cfg);
+  res.json({ success: true });
+});
+
+// Change superadmin password
+adminRouter.post('/api/superadmin-password', requireSuperadmin, async (req, res) => {
+  const { newPassword } = req.body;
+  if (!newPassword || newPassword.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+  const cfg = loadConfig();
+  // Ensure it's different from admin password
+  const sameAsAdmin = await bcrypt.compare(newPassword, cfg.auth.passwordHash);
+  if (sameAsAdmin) {
+    return res.status(400).json({ error: 'Must be different from admin password' });
+  }
+  const hash = await bcrypt.hash(newPassword, 12);
+  cfg.auth.superadminPasswordHash = hash;
   saveConfig(cfg);
   res.json({ success: true });
 });
@@ -707,7 +811,7 @@ adminRouter.post('/api/rules', (req, res) => {
 });
 
 // Save branding
-adminRouter.post('/api/branding', (req, res) => {
+adminRouter.post('/api/branding', requireSuperadmin, (req, res) => {
   const { title, subtitle } = req.body;
   const cfg = loadConfig();
   if (!cfg.branding) cfg.branding = {};
@@ -718,7 +822,7 @@ adminRouter.post('/api/branding', (req, res) => {
 });
 
 // Upload logo
-adminRouter.post('/api/branding/logo', (req, res) => {
+adminRouter.post('/api/branding/logo', requireSuperadmin, (req, res) => {
   const chunks = [];
   const contentType = req.headers['content-type'] || '';
   const maxSize = 2 * 1024 * 1024; // 2MB
@@ -756,7 +860,7 @@ adminRouter.post('/api/branding/logo', (req, res) => {
 });
 
 // Remove logo
-adminRouter.delete('/api/branding/logo', (req, res) => {
+adminRouter.delete('/api/branding/logo', requireSuperadmin, (req, res) => {
   const cfg = loadConfig();
   if (cfg.branding?.logoUrl) {
     const filePath = path.join(__dirname, cfg.branding.logoUrl);
@@ -827,7 +931,7 @@ adminRouter.post('/api/queue/reorder', (req, res) => {
 });
 
 // History
-adminRouter.get('/api/history', (req, res) => {
+adminRouter.get('/api/history', requireSuperadmin, (req, res) => {
   const cfg = loadConfig();
   const blockedEntries = (cfg.moderation?.blockedDevices || []).map(b =>
     typeof b === 'string' ? b : b.fingerprint
@@ -840,7 +944,7 @@ adminRouter.get('/api/history', (req, res) => {
 });
 
 // Block a device
-adminRouter.post('/api/block', (req, res) => {
+adminRouter.post('/api/block', requireSuperadmin, (req, res) => {
   const { fingerprint, comment } = req.body;
   if (!fingerprint) return res.status(400).json({ error: 'Missing fingerprint' });
   const cfg = loadConfig();
@@ -863,7 +967,7 @@ adminRouter.post('/api/block', (req, res) => {
 });
 
 // Update block comment
-adminRouter.post('/api/block/comment', (req, res) => {
+adminRouter.post('/api/block/comment', requireSuperadmin, (req, res) => {
   const { fingerprint, comment } = req.body;
   const cfg = loadConfig();
   const entry = (cfg.moderation?.blockedDevices || []).find(b => b.fingerprint === fingerprint);
@@ -874,7 +978,7 @@ adminRouter.post('/api/block/comment', (req, res) => {
 });
 
 // Unblock a device
-adminRouter.post('/api/unblock', (req, res) => {
+adminRouter.post('/api/unblock', requireSuperadmin, (req, res) => {
   const { fingerprint } = req.body;
   const cfg = loadConfig();
   if (!cfg.moderation) return res.json({ success: true });
@@ -886,7 +990,7 @@ adminRouter.post('/api/unblock', (req, res) => {
 });
 
 // Get blocked devices
-adminRouter.get('/api/blocked', (req, res) => {
+adminRouter.get('/api/blocked', requireSuperadmin, (req, res) => {
   const cfg = loadConfig();
   const blocked = (cfg.moderation?.blockedDevices || []).map(b =>
     typeof b === 'string' ? { fingerprint: b, comment: '', blockedAt: null } : b
@@ -895,12 +999,12 @@ adminRouter.get('/api/blocked', (req, res) => {
 });
 
 // Unban requests
-adminRouter.get('/api/unban-requests', (req, res) => {
+adminRouter.get('/api/unban-requests', requireSuperadmin, (req, res) => {
   const requests = loadUnbanRequests().filter(r => r.status === 'pending');
   res.json({ requests });
 });
 
-adminRouter.post('/api/unban-requests/:id/approve', (req, res) => {
+adminRouter.post('/api/unban-requests/:id/approve', requireSuperadmin, (req, res) => {
   const requests = loadUnbanRequests();
   const request = requests.find(r => r.id === req.params.id);
   if (!request) return res.status(404).json({ error: 'Request not found' });
@@ -918,7 +1022,7 @@ adminRouter.post('/api/unban-requests/:id/approve', (req, res) => {
   res.json({ success: true });
 });
 
-adminRouter.post('/api/unban-requests/:id/deny', (req, res) => {
+adminRouter.post('/api/unban-requests/:id/deny', requireSuperadmin, (req, res) => {
   const requests = loadUnbanRequests();
   const request = requests.find(r => r.id === req.params.id);
   if (!request) return res.status(404).json({ error: 'Request not found' });

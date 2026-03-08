@@ -87,8 +87,11 @@
   input:focus { border-color: var(--accent); }
 
   .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .field-inline { display: flex; gap: 8px; align-items: center; }
+  .field-inline input { flex: 1; }
+  .field-inline .btn { white-space: nowrap; flex-shrink: 0; }
 
-  .btn-row { display: flex; gap: 10px; margin-top: 24px; }
+  .btn-row { display: flex; gap: 10px; margin-top: 24px; flex-wrap: wrap; }
   .btn {
     display: inline-flex; align-items: center; gap: 7px;
     padding: 11px 22px; border-radius: 8px; border: none;
@@ -157,15 +160,54 @@
   .summary-item:last-child { border-bottom: none; }
   .summary-label { color: var(--muted); }
   .summary-value { font-weight: 500; }
+
+  .url-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-family: monospace;
+    font-size: 0.9rem;
+    color: var(--accent);
+    word-break: break-all;
+    margin: 12px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+  }
+  .url-box .copy-btn {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .url-box .copy-btn:hover { border-color: var(--accent); }
+
+  .restart-banner {
+    background: rgba(232,197,90,0.08);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin: 16px 0;
+    font-size: 0.85rem;
+    line-height: 1.6;
+  }
+  .restart-banner strong { color: var(--accent); }
 </style>
 </head>
 <body>
 <div class="wizard">
   <h1>Jukebox</h1>
 
-  <!-- Step indicator -->
+  <!-- Step indicator (7 steps) -->
   <div class="step-indicator" id="step-indicator">
     <div class="step-dot active"></div>
+    <div class="step-dot"></div>
     <div class="step-dot"></div>
     <div class="step-dot"></div>
     <div class="step-dot"></div>
@@ -176,19 +218,20 @@
   <!-- Step 1: Welcome -->
   <div class="step active" id="step-1">
     <div class="step-title">Welcome</div>
-    <div class="step-desc">This wizard will walk you through the initial setup. It only takes a few minutes.</div>
+    <div class="step-desc">This wizard will walk you through complete jukebox setup — from zero to ready.</div>
     <ul class="checklist">
-      <li><span class="check-icon">1.</span> Set your admin password</li>
-      <li><span class="check-icon">2.</span> Check network & certificates</li>
-      <li><span class="check-icon">3.</span> Connect Spotify</li>
-      <li><span class="check-icon">4.</span> Configure queue rules</li>
+      <li><span class="check-icon">1.</span> Create admin account</li>
+      <li><span class="check-icon">2.</span> Configure domain & network</li>
+      <li><span class="check-icon">3.</span> Generate SSL certificate</li>
+      <li><span class="check-icon">4.</span> Connect Spotify</li>
+      <li><span class="check-icon">5.</span> Set queue rules</li>
     </ul>
     <div class="btn-row">
       <button class="btn btn-primary" onclick="showStep(2)">Get Started</button>
     </div>
   </div>
 
-  <!-- Step 2: Admin Password -->
+  <!-- Step 2: Admin Account -->
   <div class="step" id="step-2">
     <div class="step-title">Admin Account</div>
     <div class="step-desc">Create your admin login. You'll use this to manage the jukebox.</div>
@@ -205,29 +248,83 @@
       <input type="password" id="cpw" placeholder="Repeat password" />
     </div>
     <p class="error" id="pw-error"></p>
-    <p class="success-msg" id="pw-success">Password set successfully</p>
+    <p class="success-msg" id="pw-success">Account created successfully</p>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="showStep(1)">Back</button>
-      <button class="btn btn-primary" id="pw-btn" onclick="setPassword()">Set Password</button>
+      <button class="btn btn-primary" id="pw-btn" onclick="setPassword()">Create Account</button>
     </div>
   </div>
 
-  <!-- Step 3: Network / Certificate -->
+  <!-- Step 3: Network & Domain -->
   <div class="step" id="step-3">
-    <div class="step-title">Network & Certificate</div>
-    <div class="step-desc">HTTPS is required for Spotify OAuth and for patron devices to connect securely.</div>
-    <div id="net-info">
-      <div class="info-box">Loading network info...</div>
+    <div class="step-title">Network & Domain</div>
+    <div class="step-desc">Set the local domain name patrons will use to reach the jukebox on your WiFi network.</div>
+    <div class="field">
+      <label>Domain Name</label>
+      <input type="text" id="domain" placeholder="e.g. jukebox.bar or jukebox.local" />
     </div>
+    <div class="field">
+      <label>Local IP Address</label>
+      <div class="field-inline">
+        <input type="text" id="local-ip" placeholder="Detecting..." />
+        <button class="btn btn-secondary" onclick="detectIp()" style="padding:11px 14px">Detect</button>
+      </div>
+    </div>
+    <div class="info-box" id="network-guide">
+      <strong>After setup, configure your router:</strong><br><br>
+      <strong>DD-WRT / DNSMasq:</strong><br>
+      <code id="dns-preview">address=/domain/ip</code><br><br>
+      <strong>Or add to each device's /etc/hosts:</strong><br>
+      <code id="hosts-preview">ip domain</code><br><br>
+      This makes <code id="domain-preview">your-domain</code> resolve to this machine on the local network.
+    </div>
+    <p class="error" id="domain-error"></p>
+    <p class="success-msg" id="domain-success"></p>
     <div class="btn-row">
       <button class="btn btn-secondary" onclick="showStep(2)">Back</button>
       <button class="btn btn-skip" onclick="showStep(4)">Skip</button>
-      <button class="btn btn-primary" onclick="showStep(4)">Next</button>
+      <button class="btn btn-primary" id="domain-btn" onclick="saveDomain()">Save & Continue</button>
     </div>
   </div>
 
-  <!-- Step 4: Spotify Setup -->
+  <!-- Step 4: SSL Certificate -->
   <div class="step" id="step-4">
+    <div class="step-title">SSL Certificate</div>
+    <div class="step-desc">Generate a self-signed certificate for HTTPS. Required for Spotify OAuth on custom domains and secure patron connections.</div>
+    <div id="cert-status-area" style="margin-bottom:16px">
+      <span class="badge disconnected" id="cert-badge">No certificate</span>
+    </div>
+    <div class="info-box" id="cert-info">
+      The certificate will cover:<br>
+      <code id="cert-domain-display">-</code>,
+      <code>localhost</code>,
+      <code>127.0.0.1</code>,
+      <code id="cert-ip-display">-</code>
+      <br><br>
+      Valid for 10 years. Patrons see a one-time "Not Secure" warning — they tap Advanced, then Proceed.
+    </div>
+    <p class="error" id="cert-error"></p>
+    <p class="success-msg" id="cert-success"></p>
+    <div id="cert-restart-area" style="display:none">
+      <div class="restart-banner">
+        <strong>Certificate generated!</strong><br>
+        The server needs to restart to enable HTTPS. After restarting, continue setup at:<br>
+        <div class="url-box">
+          <span id="new-url">-</span>
+          <button class="copy-btn" onclick="copyUrl()">Copy</button>
+        </div>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" onclick="showStep(3)">Back</button>
+      <button class="btn btn-skip" onclick="showStep(5)">Skip</button>
+      <button class="btn btn-primary" id="cert-btn" onclick="generateCert()">Generate Certificate</button>
+      <button class="btn btn-primary" id="restart-btn" style="display:none" onclick="restartServer()">Restart Server</button>
+    </div>
+  </div>
+
+  <!-- Step 5: Spotify Setup -->
+  <div class="step" id="step-5">
     <div class="step-title">Spotify Setup</div>
     <div class="step-desc">Connect a Spotify Premium account so patrons can queue songs.</div>
     <div id="spotify-badge-area" style="margin-bottom:16px">
@@ -250,15 +347,15 @@
     <p class="error" id="sp-error"></p>
     <p class="success-msg" id="sp-cred-success"></p>
     <div class="btn-row">
-      <button class="btn btn-secondary" onclick="showStep(3)">Back</button>
-      <button class="btn btn-skip" onclick="showStep(5)">Skip</button>
+      <button class="btn btn-secondary" onclick="showStep(4)">Back</button>
+      <button class="btn btn-skip" onclick="showStep(6)">Skip</button>
       <button class="btn btn-secondary" id="sp-save-btn" onclick="saveSpotifyCredentials()">Save Credentials</button>
       <button class="btn btn-primary" id="sp-auth-btn" onclick="authorizeSpotify()">Authorize</button>
     </div>
   </div>
 
-  <!-- Step 5: Rules -->
-  <div class="step" id="step-5">
+  <!-- Step 6: Rules -->
+  <div class="step" id="step-6">
     <div class="step-title">Queue Rules</div>
     <div class="step-desc">Set limits to keep the queue fair. You can change these anytime from the admin panel.</div>
     <div class="field-row">
@@ -278,21 +375,25 @@
     <p class="error" id="rules-error"></p>
     <p class="success-msg" id="rules-success"></p>
     <div class="btn-row">
-      <button class="btn btn-secondary" onclick="showStep(4)">Back</button>
-      <button class="btn btn-skip" onclick="showStep(6)">Skip</button>
+      <button class="btn btn-secondary" onclick="showStep(5)">Back</button>
+      <button class="btn btn-skip" onclick="showStep(7)">Skip</button>
       <button class="btn btn-primary" onclick="saveRules()">Save & Continue</button>
     </div>
   </div>
 
-  <!-- Step 6: Done -->
-  <div class="step" id="step-6">
+  <!-- Step 7: Done -->
+  <div class="step" id="step-7">
     <div class="step-title">All Done</div>
-    <div class="step-desc">Your jukebox is ready. Here's a summary of what was configured.</div>
+    <div class="step-desc">Your jukebox is configured. Here's a summary.</div>
 
     <div id="summary">
       <div class="summary-item">
-        <span class="summary-label">Admin password</span>
+        <span class="summary-label">Admin account</span>
         <span class="summary-value" id="sum-password">-</span>
+      </div>
+      <div class="summary-item">
+        <span class="summary-label">Domain</span>
+        <span class="summary-value" id="sum-domain">-</span>
       </div>
       <div class="summary-item">
         <span class="summary-label">HTTPS</span>
@@ -308,6 +409,31 @@
       </div>
     </div>
 
+    <div id="patron-url-area" style="display:none;margin-top:20px">
+      <label style="margin-bottom:8px">Patron URL (share this / print as QR code)</label>
+      <div class="url-box">
+        <span id="patron-url">-</span>
+        <button class="copy-btn" onclick="copyPatronUrl()">Copy</button>
+      </div>
+    </div>
+
+    <div id="final-restart-area" style="display:none">
+      <div class="restart-banner">
+        <strong>Restart needed</strong><br>
+        A certificate was generated during setup. Restart the server to enable HTTPS.
+        <div class="btn-row" style="margin-top:12px">
+          <button class="btn btn-primary" onclick="restartServer()">Restart Now</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="next-steps" class="info-box" style="margin-top:20px">
+      <strong>Next steps:</strong><br>
+      1. Configure your router DNS to point the domain to this machine<br>
+      2. Open Spotify and start playing music<br>
+      3. Share the patron URL or print a QR code for bar tables
+    </div>
+
     <div class="btn-row" style="margin-top:28px">
       <a href="/admin" class="btn btn-primary" style="text-decoration:none">Open Admin Panel</a>
       <a href="/" class="btn btn-secondary" style="text-decoration:none">Open Patron UI</a>
@@ -319,11 +445,13 @@
 <script>
   let currentStep = 1;
   let passwordSet = false;
+  let domainSet = false;
+  let certGenerated = false;
+  let certExisted = false;
   let spotifyConnected = false;
-  let certExists = false;
   let rulesSet = false;
+  let networkInfo = {};
 
-  // Restore password from sessionStorage (survives OAuth redirect)
   function getAuthHeader() {
     const pw = sessionStorage.getItem('jukebox_setup_pw');
     const user = sessionStorage.getItem('jukebox_setup_user') || 'admin';
@@ -336,7 +464,6 @@
     document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
     document.getElementById('step-' + n).classList.add('active');
 
-    // Update dots
     const dots = document.querySelectorAll('.step-dot');
     dots.forEach((dot, i) => {
       dot.className = 'step-dot';
@@ -344,12 +471,14 @@
       else if (i + 1 < n) dot.classList.add('done');
     });
 
-    // Load data for specific steps
-    if (n === 3) loadNetworkInfo();
-    if (n === 6) buildSummary();
+    if (n === 3) loadNetworkStep();
+    if (n === 4) loadCertStep();
+    if (n === 5) loadSpotifyStep();
+    if (n === 7) buildSummary();
   }
 
-  // Step 2: Set password
+  // ── Step 2: Admin Account ──
+
   async function setPassword() {
     const username = document.getElementById('username').value.trim();
     const pw = document.getElementById('pw').value;
@@ -377,7 +506,7 @@
 
     const btn = document.getElementById('pw-btn');
     btn.disabled = true;
-    btn.textContent = 'Setting...';
+    btn.textContent = 'Creating...';
 
     try {
       const r = await fetch('/admin/setup/save', {
@@ -387,9 +516,8 @@
       });
       if (!r.ok) {
         const text = await r.text();
-        throw new Error(text || 'Failed to set account');
+        throw new Error(text || 'Failed to create account');
       }
-      // Store credentials for authenticated requests
       sessionStorage.setItem('jukebox_setup_pw', pw);
       sessionStorage.setItem('jukebox_setup_user', username);
       passwordSet = true;
@@ -400,37 +528,245 @@
       errEl.textContent = e.message;
       errEl.style.display = 'block';
       btn.disabled = false;
-      btn.textContent = 'Set Password';
+      btn.textContent = 'Create Account';
     }
   }
 
-  // Step 3: Network info
-  async function loadNetworkInfo() {
-    const container = document.getElementById('net-info');
+  // ── Step 3: Network & Domain ──
+
+  async function loadNetworkStep() {
+    try {
+      const r = await fetch('/admin/setup/network-info');
+      networkInfo = await r.json();
+
+      const domainEl = document.getElementById('domain');
+      const ipEl = document.getElementById('local-ip');
+
+      if (!domainEl.value && networkInfo.domain) domainEl.value = networkInfo.domain;
+      if (!ipEl.value || ipEl.value === 'Detecting...') ipEl.value = networkInfo.localIp || networkInfo.detectedIp;
+
+      updateNetworkPreview();
+    } catch {}
+  }
+
+  function detectIp() {
+    fetch('/admin/setup/network-info')
+      .then(r => r.json())
+      .then(d => {
+        document.getElementById('local-ip').value = d.detectedIp;
+        updateNetworkPreview();
+      });
+  }
+
+  function updateNetworkPreview() {
+    const domain = document.getElementById('domain').value.trim() || 'your-domain';
+    const ip = document.getElementById('local-ip').value.trim() || 'x.x.x.x';
+    document.getElementById('dns-preview').textContent = `address=/${domain}/${ip}`;
+    document.getElementById('hosts-preview').textContent = `${ip}  ${domain}`;
+    document.getElementById('domain-preview').textContent = domain;
+  }
+
+  // Live-update the preview as user types
+  document.addEventListener('DOMContentLoaded', () => {
+    const domainEl = document.getElementById('domain');
+    const ipEl = document.getElementById('local-ip');
+    if (domainEl) domainEl.addEventListener('input', updateNetworkPreview);
+    if (ipEl) ipEl.addEventListener('input', updateNetworkPreview);
+  });
+
+  async function saveDomain() {
+    const domain = document.getElementById('domain').value.trim();
+    const localIp = document.getElementById('local-ip').value.trim();
+    const errEl = document.getElementById('domain-error');
+    const successEl = document.getElementById('domain-success');
+    errEl.style.display = 'none';
+    successEl.style.display = 'none';
+
+    if (!domain) {
+      errEl.textContent = 'Domain name is required';
+      errEl.style.display = 'block';
+      return;
+    }
+    if (!localIp) {
+      errEl.textContent = 'Local IP address is required';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    const btn = document.getElementById('domain-btn');
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+
+    try {
+      const r = await fetch('/admin/api/domain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+        body: JSON.stringify({ domain, localIp })
+      });
+      if (!r.ok) {
+        const d = await r.json();
+        throw new Error(d.error || 'Failed to save');
+      }
+      domainSet = true;
+      successEl.textContent = 'Domain saved';
+      successEl.style.display = 'block';
+      btn.textContent = 'Done';
+      setTimeout(() => showStep(4), 600);
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Save & Continue';
+    }
+  }
+
+  // ── Step 4: SSL Certificate ──
+
+  async function loadCertStep() {
     try {
       const r = await fetch('/admin/setup/network-info');
       const d = await r.json();
-      certExists = d.certExists;
-      const statusBadge = d.certExists
-        ? '<span class="badge connected">HTTPS active</span>'
-        : '<span class="badge disconnected">No certificate</span>';
-      container.innerHTML = `
-        <div class="info-box">
-          <strong>Protocol:</strong> ${d.protocol.toUpperCase()}<br>
-          <strong>Host:</strong> ${d.host}<br>
-          <strong>Redirect URI:</strong> <code>${d.redirectUri}</code><br><br>
-          <strong>Certificate:</strong> ${statusBadge}
-          ${!d.certExists ? '<br><br>To enable HTTPS, run on the server:<br><code>cd ~/jukebox-dev && bash scripts/gen-cert.sh</code><br>Then restart the jukebox.' : ''}
-        </div>
-      `;
-      // Also update spotify redirect URI display
+      networkInfo = d;
+
+      const badge = document.getElementById('cert-badge');
+      if (d.certExists) {
+        badge.className = 'badge connected';
+        badge.textContent = 'Certificate exists';
+        certExisted = true;
+        document.getElementById('cert-btn').textContent = 'Regenerate';
+      }
+
+      document.getElementById('cert-domain-display').textContent = d.domain || 'not set';
+      document.getElementById('cert-ip-display').textContent = d.localIp || 'not set';
+
+      // Update redirect URI on Spotify step
       document.getElementById('sp-redirect-uri').textContent = d.redirectUri;
-    } catch {
-      container.innerHTML = '<div class="info-box">Could not load network info.</div>';
+    } catch {}
+  }
+
+  async function generateCert() {
+    const errEl = document.getElementById('cert-error');
+    const successEl = document.getElementById('cert-success');
+    errEl.style.display = 'none';
+    successEl.style.display = 'none';
+
+    const btn = document.getElementById('cert-btn');
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+
+    try {
+      const r = await fetch('/admin/api/generate-cert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() }
+      });
+      if (!r.ok) {
+        const d = await r.json();
+        throw new Error(d.error || 'Generation failed');
+      }
+      const d = await r.json();
+      certGenerated = true;
+
+      const badge = document.getElementById('cert-badge');
+      badge.className = 'badge connected';
+      badge.textContent = 'Certificate generated';
+
+      successEl.textContent = 'Certificate generated successfully (valid 10 years)';
+      successEl.style.display = 'block';
+      btn.style.display = 'none';
+
+      // Show restart area if server is currently HTTP
+      if (networkInfo.protocol === 'http') {
+        const port = location.port || '3000';
+        const newUrl = `https://localhost:${port}/admin/setup?resume=1`;
+        document.getElementById('new-url').textContent = newUrl;
+        document.getElementById('cert-restart-area').style.display = 'block';
+        document.getElementById('restart-btn').style.display = 'inline-flex';
+      } else {
+        // Already HTTPS, just continue
+        setTimeout(() => showStep(5), 800);
+      }
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Generate Certificate';
     }
   }
 
-  // Step 4: Save Spotify credentials
+  async function restartServer() {
+    const port = location.port || '3000';
+    const resumeUrl = `https://localhost:${port}/admin/setup?resume=1`;
+
+    try {
+      await fetch('/admin/api/restart', {
+        method: 'POST',
+        headers: { ...getAuthHeader() }
+      });
+    } catch {}
+
+    // Show reconnecting message with animated dots
+    const area = document.getElementById('cert-restart-area') || document.getElementById('final-restart-area');
+    if (area) {
+      area.innerHTML = '<div class="restart-banner"><strong>Server restarting</strong><span id="restart-dots">.</span><br>Waiting for HTTPS to come up — will redirect automatically.</div>';
+    }
+
+    // Animate dots
+    let dots = 1;
+    const dotsEl = document.getElementById('restart-dots');
+    const dotsInterval = setInterval(() => {
+      dots = (dots % 3) + 1;
+      if (dotsEl) dotsEl.textContent = '.'.repeat(dots);
+    }, 500);
+
+    // Poll until server is back up on HTTPS
+    const startTime = Date.now();
+    const poll = setInterval(async () => {
+      if (Date.now() - startTime > 30000) {
+        clearInterval(poll);
+        clearInterval(dotsInterval);
+        if (area) {
+          area.innerHTML = `<div class="restart-banner"><strong>Taking longer than expected.</strong><br>Try opening manually:<div class="url-box"><span>${resumeUrl}</span><button class="copy-btn" onclick="navigator.clipboard.writeText('${resumeUrl}')">Copy</button></div></div>`;
+        }
+        return;
+      }
+      try {
+        const r = await fetch(`https://localhost:${port}/admin/setup/network-info`, {
+          signal: AbortSignal.timeout(2000)
+        });
+        if (r.ok) {
+          clearInterval(poll);
+          clearInterval(dotsInterval);
+          window.location.href = resumeUrl;
+        }
+      } catch {}
+    }, 2000);
+  }
+
+  function copyUrl() {
+    const text = document.getElementById('new-url').textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.querySelector('#cert-restart-area .copy-btn');
+      if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500); }
+    });
+  }
+
+  function copyPatronUrl() {
+    const text = document.getElementById('patron-url').textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.querySelector('#patron-url-area .copy-btn');
+      if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500); }
+    });
+  }
+
+  // ── Step 5: Spotify ──
+
+  function loadSpotifyStep() {
+    // Update redirect URI
+    if (networkInfo.redirectUri) {
+      document.getElementById('sp-redirect-uri').textContent = networkInfo.redirectUri;
+    }
+  }
+
   async function saveSpotifyCredentials() {
     const clientId = document.getElementById('sp-client-id').value.trim();
     const clientSecret = document.getElementById('sp-client-secret').value.trim();
@@ -465,12 +801,12 @@
     }
   }
 
-  // Step 4: Authorize Spotify (uses wizard route with state=wizard)
   function authorizeSpotify() {
     window.location.href = '/admin/setup/spotify/authorize';
   }
 
-  // Step 5: Save rules
+  // ── Step 6: Rules ──
+
   async function saveRules() {
     const errEl = document.getElementById('rules-error');
     const successEl = document.getElementById('rules-success');
@@ -488,62 +824,85 @@
         })
       });
       if (!r.ok) throw new Error('Failed to save rules');
-      const d = await r.json();
       rulesSet = true;
       successEl.textContent = 'Rules saved';
       successEl.style.display = 'block';
-      setTimeout(() => showStep(6), 600);
+      setTimeout(() => showStep(7), 600);
     } catch (e) {
       errEl.textContent = e.message;
       errEl.style.display = 'block';
     }
   }
 
-  // Step 6: Summary
+  // ── Step 7: Summary ──
+
   function buildSummary() {
     document.getElementById('sum-password').textContent = passwordSet ? 'Set' : 'Already set';
-    document.getElementById('sum-cert').textContent = certExists ? 'Active' : 'Not configured';
+    document.getElementById('sum-domain').textContent = networkInfo.domain || 'Not configured';
+    document.getElementById('sum-cert').textContent = (certGenerated || certExisted) ? 'Active' : 'Not configured';
     document.getElementById('sum-spotify').textContent = spotifyConnected ? 'Connected' : 'Not connected';
     document.getElementById('sum-rules').textContent = rulesSet ? 'Configured' : 'Using defaults';
 
-    // Color the values
     const setColor = (id, ok) => {
       document.getElementById(id).style.color = ok ? 'var(--green)' : 'var(--muted)';
     };
-    setColor('sum-password', true); // always true if we got here
-    setColor('sum-cert', certExists);
+    setColor('sum-password', true);
+    setColor('sum-domain', !!networkInfo.domain);
+    setColor('sum-cert', certGenerated || certExisted);
     setColor('sum-spotify', spotifyConnected);
     setColor('sum-rules', rulesSet);
+
+    // Show patron URL
+    if (networkInfo.domain) {
+      const proto = (certGenerated || certExisted) ? 'https' : 'http';
+      const port = location.port || '3000';
+      const url = `${proto}://${networkInfo.domain}:${port}`;
+      document.getElementById('patron-url').textContent = url;
+      document.getElementById('patron-url-area').style.display = 'block';
+    }
+
+    // Show restart banner if cert was generated this session but server is still HTTP
+    if (certGenerated && networkInfo.protocol === 'http') {
+      document.getElementById('final-restart-area').style.display = 'block';
+    }
   }
 
-  // On page load: check URL params for OAuth redirect back
-  (function init() {
+  // ── Init ──
+
+  (async function init() {
     const params = new URLSearchParams(window.location.search);
 
-    // Returning from OAuth redirect?
+    // Returning from Spotify OAuth redirect
     if (params.get('step') === 'spotify') {
-      // Password was already set before redirect, mark it
       passwordSet = true;
       if (params.get('spotify') === 'connected') {
         spotifyConnected = true;
       }
-      // Jump to step 4 to show result
-      showStep(4);
-      // Update badge and auto-advance
+      showStep(5);
       if (spotifyConnected) {
         const badge = document.getElementById('sp-badge');
         badge.className = 'badge connected';
         badge.textContent = 'Connected';
-        setTimeout(() => showStep(5), 1200);
+        setTimeout(() => showStep(6), 1200);
       }
-      // Clean URL
       history.replaceState({}, '', '/admin/setup');
       return;
     }
 
-    // If password is already set (user revisiting), skip to welcome but note it
-    // The server only serves this page if no password OR if ?step= is present
-    // so if we're here without ?step, it's a first run
+    // Resuming after restart (HTTPS now active)
+    if (params.get('resume')) {
+      passwordSet = true;
+      domainSet = true;
+      certExisted = true;
+      try {
+        const r = await fetch('/admin/setup/network-info');
+        networkInfo = await r.json();
+      } catch {}
+      // Skip to Spotify (domain + cert already done)
+      showStep(5);
+      history.replaceState({}, '', '/admin/setup');
+      return;
+    }
   })();
 </script>
 </body>

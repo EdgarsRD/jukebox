@@ -45,7 +45,7 @@ fi
 if [ ! -f "$PROJECT_DIR/cert.pem" ] || [ ! -f "$PROJECT_DIR/key.pem" ]; then
   echo ""
   echo "⚠️  No TLS certificate found."
-  echo "    Generate one with: bash scripts/gen-cert.sh"
+  echo "    The setup wizard will generate one for you."
   echo "    The server will start in HTTP mode for now."
   echo ""
 fi
@@ -53,7 +53,7 @@ fi
 # ── Config check ──
 if [ ! -f "$PROJECT_DIR/config.json" ]; then
   echo "⚠️  No config.json found — server will create one on first run."
-  echo "    Visit https://jukebox.kzd:3000/admin to complete setup."
+  echo "    Visit http://localhost:3000/admin to complete the setup wizard."
 fi
 
 # ── Autostart option ──

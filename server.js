@@ -7,6 +7,8 @@ const bcrypt = require('bcryptjs');
 const axios = require('axios');
 const crypto = require('crypto');
 const querystring = require('querystring');
+const os = require('os');
+const { execFile } = require('child_process');
 
 const app = express();
 app.use(express.json());
@@ -27,6 +29,7 @@ function loadConfig() {
   if (!fs.existsSync(CONFIG_PATH)) {
     const defaults = {
       auth: { username: '', passwordHash: '' },
+      network: { domain: '', localIp: '' },
       spotify: { clientId: '', clientSecret: '', refreshToken: '' },
       rules: { rateLimitMinutes: 5, maxQueueLength: 20, maxSongsPerDevice: 2 },
       moderation: { blockMode: 'silent', blockedDevices: [] }
@@ -427,13 +430,31 @@ app.post('/admin/setup/save', async (req, res) => {
 
 // Network info for wizard (no auth required)
 app.get('/admin/setup/network-info', (req, res) => {
+  const cfg = loadConfig();
   const certExists = fs.existsSync(path.join(__dirname, 'cert.pem')) && fs.existsSync(path.join(__dirname, 'key.pem'));
   const protocol = certExists ? 'https' : 'http';
   const host = req.get('host');
+
+  // Detect local IP from network interfaces
+  let detectedIp = '127.0.0.1';
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        detectedIp = iface.address;
+        break;
+      }
+    }
+    if (detectedIp !== '127.0.0.1') break;
+  }
+
   res.json({
     certExists,
     protocol,
     host,
+    detectedIp,
+    domain: cfg.network?.domain || '',
+    localIp: cfg.network?.localIp || detectedIp,
     redirectUri: `${protocol}://${host}/auth/callback`
   });
 });
@@ -517,6 +538,57 @@ adminRouter.get('/spotify/authorize', (req, res) => {
     redirect_uri: `${req.protocol}://${req.get('host')}/auth/callback`
   });
   res.redirect(`https://accounts.spotify.com/authorize?${params}`);
+});
+
+// Save domain and local IP
+adminRouter.post('/api/domain', (req, res) => {
+  const { domain, localIp } = req.body;
+  if (!domain || !/^[a-zA-Z0-9][a-zA-Z0-9.-]{0,251}[a-zA-Z0-9]$/.test(domain)) {
+    return res.status(400).json({ error: 'Invalid domain name' });
+  }
+  if (!localIp || !/^(\d{1,3}\.){3}\d{1,3}$/.test(localIp)) {
+    return res.status(400).json({ error: 'Invalid IP address' });
+  }
+  const cfg = loadConfig();
+  if (!cfg.network) cfg.network = {};
+  cfg.network.domain = domain.toLowerCase();
+  cfg.network.localIp = localIp;
+  saveConfig(cfg);
+  res.json({ success: true });
+});
+
+// Generate self-signed TLS certificate
+adminRouter.post('/api/generate-cert', (req, res) => {
+  const cfg = loadConfig();
+  const domain = cfg.network?.domain;
+  const localIp = cfg.network?.localIp;
+  if (!domain || !localIp) {
+    return res.status(400).json({ error: 'Configure domain and IP first' });
+  }
+
+  const certPath = path.join(__dirname, 'cert.pem');
+  const keyPath = path.join(__dirname, 'key.pem');
+  const san = `subjectAltName=DNS:${domain},DNS:localhost,IP:127.0.0.1,IP:${localIp}`;
+
+  execFile('openssl', [
+    'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+    '-keyout', keyPath,
+    '-out', certPath,
+    '-days', '3650',
+    '-subj', `/CN=${domain}/O=Jukebox/C=LV`,
+    '-addext', san
+  ], (err) => {
+    if (err) {
+      return res.status(500).json({ error: 'Certificate generation failed. Is openssl installed?' });
+    }
+    res.json({ success: true, domain, localIp });
+  });
+});
+
+// Restart server (to pick up new certs)
+adminRouter.post('/api/restart', (req, res) => {
+  res.json({ success: true });
+  setTimeout(() => process.exit(1), 500);
 });
 
 // Save rules
@@ -736,6 +808,9 @@ const PORT = process.env.PORT || 3000;
 const CERT_PATH = path.join(__dirname, 'cert.pem');
 const KEY_PATH = path.join(__dirname, 'key.pem');
 
+const startupCfg = loadConfig();
+const displayHost = startupCfg.network?.domain || 'localhost';
+
 if (fs.existsSync(CERT_PATH) && fs.existsSync(KEY_PATH)) {
   const httpsOptions = {
     cert: fs.readFileSync(CERT_PATH),
@@ -743,8 +818,8 @@ if (fs.existsSync(CERT_PATH) && fs.existsSync(KEY_PATH)) {
   };
   https.createServer(httpsOptions, app).listen(PORT, () => {
     console.log(`\n✅  Jukebox running`);
-    console.log(`    Patron UI : https://jukebox.kzd:${PORT}`);
-    console.log(`    Admin     : https://jukebox.kzd:${PORT}/admin\n`);
+    console.log(`    Patron UI : https://${displayHost}:${PORT}`);
+    console.log(`    Admin     : https://${displayHost}:${PORT}/admin\n`);
   });
   // Redirect HTTP → HTTPS
   http.createServer((req, res) => {
@@ -752,7 +827,7 @@ if (fs.existsSync(CERT_PATH) && fs.existsSync(KEY_PATH)) {
     res.end();
   }).listen(3001, () => console.log('↩️  HTTP→HTTPS redirect active on port 3001'));
 } else {
-  console.warn('⚠️  No cert.pem/key.pem found — running HTTP only (run scripts/gen-cert.sh first)');
+  console.warn('⚠️  No cert.pem/key.pem found — running HTTP only (generate cert via setup wizard)');
   app.listen(PORT, () => {
     console.log(`\nJukebox running (HTTP only — generate cert for HTTPS)`);
     console.log(`  Patron UI : http://localhost:${PORT}`);

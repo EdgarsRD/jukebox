@@ -49,7 +49,7 @@
     color: var(--accent);
     line-height: 1;
   }
-  header p { color: var(--muted); font-size: 0.82rem; margin-top: 4px; letter-spacing: 0.04em; }
+  header p { color: var(--muted); font-size: 1.05rem; margin-top: 6px; letter-spacing: 0.04em; }
 
   /* ── Now playing ── */
   #now-playing {
@@ -155,24 +155,54 @@
   }
   .track-add:active { transform: scale(0.88); }
 
+  /* ── Top songs ── */
+  #top-songs { margin-bottom: 24px; }
+  .top-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px;
+  }
+  .top-item:not(:last-child) { border-bottom: 1px solid var(--border); }
+  .top-rank {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.2rem;
+    color: var(--accent);
+    width: 22px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .top-art {
+    width: 36px; height: 36px; border-radius: 4px;
+    object-fit: cover; flex-shrink: 0; background: var(--surface2);
+  }
+  .top-info { flex: 1; min-width: 0; }
+  .top-title { font-size: 0.85rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .top-artist { font-size: 0.75rem; color: var(--muted); }
+  .top-count { font-size: 0.72rem; color: var(--muted); flex-shrink: 0; }
+
   /* ── Queue ── */
+  .section-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 24px;
+    overflow: hidden;
+  }
   .section-label {
     font-size: 0.7rem;
     color: var(--muted);
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    margin-bottom: 10px;
+    padding: 12px 14px 8px;
     font-weight: 500;
   }
-  #queue-list { }
   .queue-item {
     display: flex;
     align-items: center;
     gap: 10px;
     padding: 8px 12px;
-    border-bottom: 1px solid var(--border);
     animation: fadeIn 0.25s ease;
   }
+  .queue-item:not(:last-child) { border-bottom: 1px solid var(--border); }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   .queue-num {
     font-size: 0.75rem;
@@ -267,8 +297,9 @@
 <body>
 <div class="app">
   <header>
-    <h1>Jukebox</h1>
-    <p>Request a song for the queue</p>
+    <img id="header-logo" src="" alt="" style="display:none; max-height:140px; max-width:280px; margin:0 auto 8px; object-fit:contain;" />
+    <h1 id="header-title">Jukebox</h1>
+    <p id="header-subtitle">Request a song for the queue</p>
   </header>
 
   <!-- Now playing -->
@@ -292,8 +323,13 @@
   <div id="results"></div>
 
   <!-- Queue -->
-  <div class="section-label">Up Next</div>
-  <div id="queue-list"><div class="queue-empty">Queue is empty</div></div>
+  <div class="section-card">
+    <div class="section-label">Up Next</div>
+    <div id="queue-list"><div class="queue-empty">Queue is empty</div></div>
+  </div>
+
+  <!-- Top Songs -->
+  <div id="top-songs"></div>
 </div>
 
 <div id="toast"></div>
@@ -489,7 +525,49 @@
     return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+  // ── Top Songs ──
+  async function loadTopSongs() {
+    try {
+      const r = await fetch('/api/top-songs');
+      const d = await r.json();
+      const el = document.getElementById('top-songs');
+      if (!d.songs.length) { el.innerHTML = ''; return; }
+      el.innerHTML = '<div class="section-card"><div class="section-label">Popular This Month</div>' +
+        d.songs.map((s, i) => `
+          <div class="top-item">
+            <span class="top-rank">${i + 1}</span>
+            <img class="top-art" src="${s.albumArt}" alt="" loading="lazy" />
+            <div class="top-info">
+              <div class="top-title">${escHtml(s.title)}</div>
+              <div class="top-artist">${escHtml(s.artist)}</div>
+            </div>
+            <span class="top-count">${s.count}×</span>
+          </div>
+        `).join('') + '</div>';
+    } catch {}
+  }
+
+  // ── Branding ──
+  async function loadBranding() {
+    try {
+      const r = await fetch('/api/branding');
+      const b = await r.json();
+      document.getElementById('header-title').textContent = b.title || 'Jukebox';
+      document.getElementById('header-subtitle').textContent = b.subtitle || 'Request a song for the queue';
+      document.title = b.title || 'Jukebox';
+      const logo = document.getElementById('header-logo');
+      if (b.logoUrl) {
+        logo.src = b.logoUrl;
+        logo.style.display = 'block';
+      } else {
+        logo.style.display = 'none';
+      }
+    } catch {}
+  }
+
   // ── Poll ──
+  loadBranding();
+  loadTopSongs();
   loadQueue();
   loadNowPlaying();
   setInterval(loadQueue, 10000);

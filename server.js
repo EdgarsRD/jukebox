@@ -33,7 +33,8 @@ function loadConfig() {
       cloudflare: { apiToken: '', accountKey: '', certType: '' },
       spotify: { clientId: '', clientSecret: '', refreshToken: '' },
       rules: { rateLimitMinutes: 5, maxQueueLength: 20, maxSongsPerDevice: 2 },
-      moderation: { blockMode: 'silent', blockedDevices: [] }
+      moderation: { blockMode: 'silent', blockedDevices: [] },
+      branding: { title: 'Jukebox', subtitle: 'Request a song for the queue', logoUrl: '' }
     };
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(defaults, null, 2));
     return defaults;
@@ -49,7 +50,7 @@ loadConfig(); // ensure config.json exists on first run
 
 // ─── History helpers ──────────────────────────────────────────────────────────
 
-const MAX_HISTORY = 200;
+const MAX_HISTORY = 10000;
 
 function loadHistory() {
   if (!fs.existsSync(HISTORY_PATH)) return [];
@@ -209,7 +210,37 @@ function adminAuth(req, res, next) {
 
 // ─── Public routes ────────────────────────────────────────────────────────────
 
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR);
+app.use('/uploads', express.static(UPLOADS_DIR));
+
 app.use('/', express.static(path.join(__dirname, 'public')));
+
+// Branding
+app.get('/api/branding', (req, res) => {
+  const cfg = loadConfig();
+  const b = cfg.branding || {};
+  res.json({
+    title: b.title || 'Jukebox',
+    subtitle: b.subtitle || 'Request a song for the queue',
+    logoUrl: b.logoUrl || ''
+  });
+});
+
+// Top songs (past 30 days)
+app.get('/api/top-songs', (req, res) => {
+  const history = loadHistory();
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const counts = {};
+  for (const h of history) {
+    if (h.addedAt < cutoff) continue;
+    const key = `${h.title}|||${h.artist}`;
+    if (!counts[key]) counts[key] = { title: h.title, artist: h.artist, albumArt: h.albumArt, count: 0 };
+    counts[key].count++;
+  }
+  const top = Object.values(counts).sort((a, b) => b.count - a.count).slice(0, 5);
+  res.json({ songs: top });
+});
 
 // Search
 app.get('/api/search', async (req, res) => {
@@ -509,7 +540,8 @@ adminRouter.get('/api/config', (req, res) => {
       clientSecret: cfg.spotify.clientSecret ? '••••••••' : '',
       connected: !!(cfg.spotify.refreshToken)
     },
-    rules: cfg.rules
+    rules: cfg.rules,
+    branding: cfg.branding || { title: 'Jukebox', subtitle: 'Request a song for the queue', logoUrl: '' }
   });
 });
 
@@ -670,6 +702,67 @@ adminRouter.post('/api/rules', (req, res) => {
   saveConfig(cfg);
   console.log('[Rules] Saved:', cfg.rules);
   res.json({ success: true, rules: cfg.rules });
+});
+
+// Save branding
+adminRouter.post('/api/branding', (req, res) => {
+  const { title, subtitle } = req.body;
+  const cfg = loadConfig();
+  if (!cfg.branding) cfg.branding = {};
+  if (title !== undefined) cfg.branding.title = String(title).slice(0, 50);
+  if (subtitle !== undefined) cfg.branding.subtitle = String(subtitle).slice(0, 100);
+  saveConfig(cfg);
+  res.json({ success: true });
+});
+
+// Upload logo
+adminRouter.post('/api/branding/logo', (req, res) => {
+  const chunks = [];
+  const contentType = req.headers['content-type'] || '';
+  const maxSize = 2 * 1024 * 1024; // 2MB
+  let size = 0;
+
+  req.on('data', chunk => {
+    size += chunk.length;
+    if (size > maxSize) {
+      req.destroy();
+      return res.status(413).json({ error: 'Logo must be under 2MB' });
+    }
+    chunks.push(chunk);
+  });
+
+  req.on('end', () => {
+    const buf = Buffer.concat(chunks);
+    // Detect file type from magic bytes
+    let ext = 'png';
+    if (buf[0] === 0xFF && buf[1] === 0xD8) ext = 'jpg';
+    else if (buf.toString('ascii', 0, 3) === 'GIF') ext = 'gif';
+    else if (buf.toString('ascii', 1, 4) === 'PNG') ext = 'png';
+    else if (buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') ext = 'webp';
+    else if (buf.toString('ascii', 0, 5) === '<?xml' || buf.toString('ascii', 0, 4) === '<svg') ext = 'svg';
+
+    const filename = `logo.${ext}`;
+    fs.writeFileSync(path.join(UPLOADS_DIR, filename), buf);
+
+    const cfg = loadConfig();
+    if (!cfg.branding) cfg.branding = {};
+    cfg.branding.logoUrl = `/uploads/${filename}`;
+    saveConfig(cfg);
+
+    res.json({ success: true, logoUrl: cfg.branding.logoUrl });
+  });
+});
+
+// Remove logo
+adminRouter.delete('/api/branding/logo', (req, res) => {
+  const cfg = loadConfig();
+  if (cfg.branding?.logoUrl) {
+    const filePath = path.join(__dirname, cfg.branding.logoUrl);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    cfg.branding.logoUrl = '';
+    saveConfig(cfg);
+  }
+  res.json({ success: true });
 });
 
 // Queue management

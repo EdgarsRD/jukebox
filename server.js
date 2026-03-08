@@ -399,22 +399,56 @@ app.post('/api/unban-request', (req, res) => {
 
 app.get('/admin/setup', (req, res) => {
   const cfg = loadConfig();
-  if (cfg.auth.passwordHash) return res.redirect('/admin');
+  if (cfg.auth.passwordHash && !req.query.step) return res.redirect('/admin');
   res.sendFile(path.join(__dirname, 'admin', 'setup.html'));
 });
 
 app.post('/admin/setup/save', async (req, res) => {
   const cfg = loadConfig();
-  if (cfg.auth.passwordHash) return res.redirect('/admin');
+  if (cfg.auth.passwordHash) return res.status(400).send('Password already set');
   const { password, confirm } = req.body;
   if (!password || password !== confirm) {
     return res.status(400).send('Passwords do not match');
+  }
+  if (password.length < 6) {
+    return res.status(400).send('Password must be at least 6 characters');
   }
   const hash = await bcrypt.hash(password, 12);
   const cfg2 = loadConfig();
   cfg2.auth.passwordHash = hash;
   saveConfig(cfg2);
-  res.redirect('/admin');
+  res.json({ success: true });
+});
+
+// Network info for wizard (no auth required)
+app.get('/admin/setup/network-info', (req, res) => {
+  const certExists = fs.existsSync(path.join(__dirname, 'cert.pem')) && fs.existsSync(path.join(__dirname, 'key.pem'));
+  const protocol = certExists ? 'https' : 'http';
+  const host = req.get('host');
+  res.json({
+    certExists,
+    protocol,
+    host,
+    redirectUri: `${protocol}://${host}/auth/callback`
+  });
+});
+
+// Spotify authorize for wizard (no auth required, adds state=wizard)
+app.get('/admin/setup/spotify/authorize', (req, res) => {
+  const cfg = loadConfig();
+  if (!cfg.spotify.clientId) {
+    return res.status(400).send('Save Spotify credentials first');
+  }
+  const protocol = (fs.existsSync(path.join(__dirname, 'cert.pem')) && fs.existsSync(path.join(__dirname, 'key.pem'))) ? 'https' : 'http';
+  const scopes = 'user-read-playback-state user-modify-playback-state user-read-currently-playing';
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: cfg.spotify.clientId,
+    scope: scopes,
+    redirect_uri: `${protocol}://${req.get('host')}/auth/callback`,
+    state: 'wizard'
+  });
+  res.redirect(`https://accounts.spotify.com/authorize?${params}`);
 });
 
 // ─── Admin routes (protected) ─────────────────────────────────────────────────
@@ -683,7 +717,8 @@ app.get('/auth/callback', async (req, res) => {
     accessToken = r.data.access_token;
     accessTokenExpiry = Date.now() + r.data.expires_in * 1000;
 
-    res.redirect('/admin?spotify=connected');
+    const fromWizard = req.query.state === 'wizard';
+    res.redirect(fromWizard ? '/admin/setup?step=spotify&spotify=connected' : '/admin?spotify=connected');
   } catch (err) {
     console.error('OAuth callback error:', err.response?.data || err.message);
     res.send('OAuth failed. Check credentials and try again.');

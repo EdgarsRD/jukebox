@@ -3,14 +3,26 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Jukebox — First Run Setup</title>
+<title>Jukebox — Setup Wizard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0a0a0a;
+    --surface: #141414;
+    --surface2: #1e1e1e;
+    --border: #2a2a2a;
+    --accent: #e8c55a;
+    --accent-dim: rgba(232,197,90,0.1);
+    --text: #ede9e1;
+    --muted: #666;
+    --red: #e05252;
+    --green: #52c87a;
+  }
   body {
-    background: #0a0a0a;
-    color: #ede9e1;
+    background: var(--bg);
+    color: var(--text);
     font-family: 'DM Sans', sans-serif;
     min-height: 100vh;
     display: flex;
@@ -18,60 +30,508 @@
     justify-content: center;
     padding: 24px;
   }
-  .card {
-    background: #141414;
-    border: 1px solid #2a2a2a;
-    border-radius: 12px;
-    padding: 36px;
+  .wizard {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 40px 36px;
     width: 100%;
-    max-width: 400px;
+    max-width: 520px;
   }
-  h1 { font-family: 'Bebas Neue', sans-serif; font-size: 2.4rem; color: #e8c55a; letter-spacing: 0.06em; margin-bottom: 4px; }
-  .subtitle { color: #666; font-size: 0.85rem; margin-bottom: 28px; }
-  label { display: block; font-size: 0.78rem; color: #666; margin-bottom: 6px; }
+  h1 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 2.4rem;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+  }
+  .step-indicator {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 28px;
+  }
+  .step-dot {
+    width: 32px; height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    transition: background 0.3s;
+  }
+  .step-dot.active { background: var(--accent); }
+  .step-dot.done { background: var(--green); }
+
+  .step { display: none; }
+  .step.active { display: block; }
+
+  .step-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.6rem;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    margin-bottom: 6px;
+  }
+  .step-desc {
+    color: var(--muted);
+    font-size: 0.85rem;
+    line-height: 1.6;
+    margin-bottom: 24px;
+  }
+
   .field { margin-bottom: 16px; }
-  input {
-    width: 100%; background: #1e1e1e; border: 1px solid #2a2a2a;
-    border-radius: 8px; padding: 11px 14px; color: #ede9e1;
+  label { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 6px; letter-spacing: 0.04em; }
+  input[type=text], input[type=password], input[type=number] {
+    width: 100%; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 11px 14px; color: var(--text);
     font-family: 'DM Sans', sans-serif; font-size: 0.9rem; outline: none;
     transition: border-color 0.15s;
   }
-  input:focus { border-color: #e8c55a; }
-  button {
-    width: 100%; padding: 12px; background: #e8c55a; color: #0a0a0a;
-    border: none; border-radius: 8px; font-family: 'DM Sans', sans-serif;
-    font-size: 0.95rem; font-weight: 500; cursor: pointer; margin-top: 8px;
-    transition: opacity 0.15s;
+  input:focus { border-color: var(--accent); }
+
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  .btn-row { display: flex; gap: 10px; margin-top: 24px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 11px 22px; border-radius: 8px; border: none;
+    font-family: 'DM Sans', sans-serif; font-size: 0.92rem; font-weight: 500;
+    cursor: pointer; transition: opacity 0.15s;
   }
-  button:hover { opacity: 0.88; }
-  .error { color: #e05252; font-size: 0.82rem; margin-top: 10px; display: none; }
+  .btn:hover { opacity: 0.88; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: #0a0a0a; }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-skip { background: none; color: var(--muted); border: 1px solid var(--border); }
+
+  .error { color: var(--red); font-size: 0.82rem; margin-top: 8px; display: none; }
+  .success-msg { color: var(--green); font-size: 0.82rem; margin-top: 8px; display: none; }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 0.78rem; padding: 4px 12px; border-radius: 100px; font-weight: 500;
+  }
+  .badge::before { content: ''; width: 7px; height: 7px; border-radius: 50%; display: block; }
+  .badge.connected { background: rgba(82,200,122,0.12); color: var(--green); }
+  .badge.connected::before { background: var(--green); }
+  .badge.disconnected { background: rgba(224,82,82,0.12); color: var(--red); }
+  .badge.disconnected::before { background: var(--red); }
+  .badge.neutral { background: var(--accent-dim); color: var(--accent); }
+  .badge.neutral::before { background: var(--accent); }
+
+  .info-box {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-size: 0.83rem;
+    color: var(--muted);
+    line-height: 1.6;
+    margin-bottom: 16px;
+  }
+  code {
+    background: var(--bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.85em;
+    color: var(--accent);
+  }
+
+  .checklist { list-style: none; padding: 0; }
+  .checklist li {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.88rem;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .checklist li:last-child { border-bottom: none; }
+  .check-icon { color: var(--muted); font-size: 1rem; flex-shrink: 0; }
+
+  .summary-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.88rem;
+  }
+  .summary-item:last-child { border-bottom: none; }
+  .summary-label { color: var(--muted); }
+  .summary-value { font-weight: 500; }
 </style>
 </head>
 <body>
-<div class="card">
+<div class="wizard">
   <h1>Jukebox</h1>
-  <p class="subtitle">First run — set your admin password to get started.</p>
-  <form method="POST" action="/admin/setup/save" onsubmit="return validate()">
+
+  <!-- Step indicator -->
+  <div class="step-indicator" id="step-indicator">
+    <div class="step-dot active"></div>
+    <div class="step-dot"></div>
+    <div class="step-dot"></div>
+    <div class="step-dot"></div>
+    <div class="step-dot"></div>
+    <div class="step-dot"></div>
+  </div>
+
+  <!-- Step 1: Welcome -->
+  <div class="step active" id="step-1">
+    <div class="step-title">Welcome</div>
+    <div class="step-desc">This wizard will walk you through the initial setup. It only takes a few minutes.</div>
+    <ul class="checklist">
+      <li><span class="check-icon">1.</span> Set your admin password</li>
+      <li><span class="check-icon">2.</span> Check network & certificates</li>
+      <li><span class="check-icon">3.</span> Connect Spotify</li>
+      <li><span class="check-icon">4.</span> Configure queue rules</li>
+    </ul>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="showStep(2)">Get Started</button>
+    </div>
+  </div>
+
+  <!-- Step 2: Admin Password -->
+  <div class="step" id="step-2">
+    <div class="step-title">Admin Password</div>
+    <div class="step-desc">Set a password for the admin panel. You'll use this to manage the jukebox.</div>
     <div class="field">
-      <label>Admin Password</label>
-      <input type="password" name="password" id="pw" placeholder="Choose a strong password" required />
+      <label>Password</label>
+      <input type="password" id="pw" placeholder="Choose a strong password" />
     </div>
     <div class="field">
       <label>Confirm Password</label>
-      <input type="password" name="confirm" id="cpw" placeholder="Repeat password" required />
+      <input type="password" id="cpw" placeholder="Repeat password" />
     </div>
-    <p class="error" id="err">Passwords do not match</p>
-    <button type="submit">Set Password & Enter Admin</button>
-  </form>
+    <p class="error" id="pw-error"></p>
+    <p class="success-msg" id="pw-success">Password set successfully</p>
+    <div class="btn-row">
+      <button class="btn btn-secondary" onclick="showStep(1)">Back</button>
+      <button class="btn btn-primary" id="pw-btn" onclick="setPassword()">Set Password</button>
+    </div>
+  </div>
+
+  <!-- Step 3: Network / Certificate -->
+  <div class="step" id="step-3">
+    <div class="step-title">Network & Certificate</div>
+    <div class="step-desc">HTTPS is required for Spotify OAuth and for patron devices to connect securely.</div>
+    <div id="net-info">
+      <div class="info-box">Loading network info...</div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" onclick="showStep(2)">Back</button>
+      <button class="btn btn-skip" onclick="showStep(4)">Skip</button>
+      <button class="btn btn-primary" onclick="showStep(4)">Next</button>
+    </div>
+  </div>
+
+  <!-- Step 4: Spotify Setup -->
+  <div class="step" id="step-4">
+    <div class="step-title">Spotify Setup</div>
+    <div class="step-desc">Connect a Spotify Premium account so patrons can queue songs.</div>
+    <div id="spotify-badge-area" style="margin-bottom:16px">
+      <span class="badge disconnected" id="sp-badge">Not connected</span>
+    </div>
+    <div class="info-box">
+      1. Go to <code>developer.spotify.com/dashboard</code><br>
+      2. Create an app (any name)<br>
+      3. Set Redirect URI to: <code id="sp-redirect-uri">loading...</code><br>
+      4. Copy Client ID and Client Secret below
+    </div>
+    <div class="field">
+      <label>Client ID</label>
+      <input type="text" id="sp-client-id" placeholder="Paste your Client ID" />
+    </div>
+    <div class="field">
+      <label>Client Secret</label>
+      <input type="text" id="sp-client-secret" placeholder="Paste your Client Secret" />
+    </div>
+    <p class="error" id="sp-error"></p>
+    <p class="success-msg" id="sp-cred-success"></p>
+    <div class="btn-row">
+      <button class="btn btn-secondary" onclick="showStep(3)">Back</button>
+      <button class="btn btn-skip" onclick="showStep(5)">Skip</button>
+      <button class="btn btn-secondary" id="sp-save-btn" onclick="saveSpotifyCredentials()">Save Credentials</button>
+      <button class="btn btn-primary" id="sp-auth-btn" onclick="authorizeSpotify()">Authorize</button>
+    </div>
+  </div>
+
+  <!-- Step 5: Rules -->
+  <div class="step" id="step-5">
+    <div class="step-title">Queue Rules</div>
+    <div class="step-desc">Set limits to keep the queue fair. You can change these anytime from the admin panel.</div>
+    <div class="field-row">
+      <div class="field">
+        <label>Rate limit (minutes between requests)</label>
+        <input type="number" id="rule-ratelimit" min="0" max="60" value="5" />
+      </div>
+      <div class="field">
+        <label>Max queue length</label>
+        <input type="number" id="rule-maxqueue" min="1" max="100" value="20" />
+      </div>
+    </div>
+    <div class="field" style="max-width:240px">
+      <label>Max songs per device in queue</label>
+      <input type="number" id="rule-perdevice" min="1" max="10" value="2" />
+    </div>
+    <p class="error" id="rules-error"></p>
+    <p class="success-msg" id="rules-success"></p>
+    <div class="btn-row">
+      <button class="btn btn-secondary" onclick="showStep(4)">Back</button>
+      <button class="btn btn-skip" onclick="showStep(6)">Skip</button>
+      <button class="btn btn-primary" onclick="saveRules()">Save & Continue</button>
+    </div>
+  </div>
+
+  <!-- Step 6: Done -->
+  <div class="step" id="step-6">
+    <div class="step-title">All Done</div>
+    <div class="step-desc">Your jukebox is ready. Here's a summary of what was configured.</div>
+
+    <div id="summary">
+      <div class="summary-item">
+        <span class="summary-label">Admin password</span>
+        <span class="summary-value" id="sum-password">-</span>
+      </div>
+      <div class="summary-item">
+        <span class="summary-label">HTTPS</span>
+        <span class="summary-value" id="sum-cert">-</span>
+      </div>
+      <div class="summary-item">
+        <span class="summary-label">Spotify</span>
+        <span class="summary-value" id="sum-spotify">-</span>
+      </div>
+      <div class="summary-item">
+        <span class="summary-label">Queue rules</span>
+        <span class="summary-value" id="sum-rules">-</span>
+      </div>
+    </div>
+
+    <div class="btn-row" style="margin-top:28px">
+      <a href="/admin" class="btn btn-primary" style="text-decoration:none">Open Admin Panel</a>
+      <a href="/" class="btn btn-secondary" style="text-decoration:none">Open Patron UI</a>
+    </div>
+  </div>
+
 </div>
+
 <script>
-  function validate() {
-    if (document.getElementById('pw').value !== document.getElementById('cpw').value) {
-      document.getElementById('err').style.display = 'block';
-      return false;
-    }
-    return true;
+  let currentStep = 1;
+  let passwordSet = false;
+  let spotifyConnected = false;
+  let certExists = false;
+  let rulesSet = false;
+
+  // Restore password from sessionStorage (survives OAuth redirect)
+  function getAuthHeader() {
+    const pw = sessionStorage.getItem('jukebox_setup_pw');
+    if (!pw) return {};
+    return { 'Authorization': 'Basic ' + btoa('kzd:' + pw) };
   }
+
+  function showStep(n) {
+    currentStep = n;
+    document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+    document.getElementById('step-' + n).classList.add('active');
+
+    // Update dots
+    const dots = document.querySelectorAll('.step-dot');
+    dots.forEach((dot, i) => {
+      dot.className = 'step-dot';
+      if (i + 1 === n) dot.classList.add('active');
+      else if (i + 1 < n) dot.classList.add('done');
+    });
+
+    // Load data for specific steps
+    if (n === 3) loadNetworkInfo();
+    if (n === 6) buildSummary();
+  }
+
+  // Step 2: Set password
+  async function setPassword() {
+    const pw = document.getElementById('pw').value;
+    const cpw = document.getElementById('cpw').value;
+    const errEl = document.getElementById('pw-error');
+    const successEl = document.getElementById('pw-success');
+    errEl.style.display = 'none';
+    successEl.style.display = 'none';
+
+    if (!pw || pw.length < 6) {
+      errEl.textContent = 'Password must be at least 6 characters';
+      errEl.style.display = 'block';
+      return;
+    }
+    if (pw !== cpw) {
+      errEl.textContent = 'Passwords do not match';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    const btn = document.getElementById('pw-btn');
+    btn.disabled = true;
+    btn.textContent = 'Setting...';
+
+    try {
+      const r = await fetch('/admin/setup/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw, confirm: cpw })
+      });
+      if (!r.ok) {
+        const text = await r.text();
+        throw new Error(text || 'Failed to set password');
+      }
+      // Store password for authenticated requests
+      sessionStorage.setItem('jukebox_setup_pw', pw);
+      passwordSet = true;
+      successEl.style.display = 'block';
+      btn.textContent = 'Done';
+      setTimeout(() => showStep(3), 600);
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Set Password';
+    }
+  }
+
+  // Step 3: Network info
+  async function loadNetworkInfo() {
+    const container = document.getElementById('net-info');
+    try {
+      const r = await fetch('/admin/setup/network-info');
+      const d = await r.json();
+      certExists = d.certExists;
+      const statusBadge = d.certExists
+        ? '<span class="badge connected">HTTPS active</span>'
+        : '<span class="badge disconnected">No certificate</span>';
+      container.innerHTML = `
+        <div class="info-box">
+          <strong>Protocol:</strong> ${d.protocol.toUpperCase()}<br>
+          <strong>Host:</strong> ${d.host}<br>
+          <strong>Redirect URI:</strong> <code>${d.redirectUri}</code><br><br>
+          <strong>Certificate:</strong> ${statusBadge}
+          ${!d.certExists ? '<br><br>To enable HTTPS, run on the server:<br><code>cd ~/jukebox-dev && bash scripts/gen-cert.sh</code><br>Then restart the jukebox.' : ''}
+        </div>
+      `;
+      // Also update spotify redirect URI display
+      document.getElementById('sp-redirect-uri').textContent = d.redirectUri;
+    } catch {
+      container.innerHTML = '<div class="info-box">Could not load network info.</div>';
+    }
+  }
+
+  // Step 4: Save Spotify credentials
+  async function saveSpotifyCredentials() {
+    const clientId = document.getElementById('sp-client-id').value.trim();
+    const clientSecret = document.getElementById('sp-client-secret').value.trim();
+    const errEl = document.getElementById('sp-error');
+    const successEl = document.getElementById('sp-cred-success');
+    errEl.style.display = 'none';
+    successEl.style.display = 'none';
+
+    if (!clientId) {
+      errEl.textContent = 'Client ID is required';
+      errEl.style.display = 'block';
+      return;
+    }
+    if (!clientSecret) {
+      errEl.textContent = 'Client Secret is required';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    try {
+      const r = await fetch('/admin/api/spotify/credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+        body: JSON.stringify({ clientId, clientSecret })
+      });
+      if (!r.ok) throw new Error('Failed to save credentials');
+      successEl.textContent = 'Credentials saved. Click Authorize to connect.';
+      successEl.style.display = 'block';
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.style.display = 'block';
+    }
+  }
+
+  // Step 4: Authorize Spotify (uses wizard route with state=wizard)
+  function authorizeSpotify() {
+    window.location.href = '/admin/setup/spotify/authorize';
+  }
+
+  // Step 5: Save rules
+  async function saveRules() {
+    const errEl = document.getElementById('rules-error');
+    const successEl = document.getElementById('rules-success');
+    errEl.style.display = 'none';
+    successEl.style.display = 'none';
+
+    try {
+      const r = await fetch('/admin/api/rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+        body: JSON.stringify({
+          rateLimitMinutes: document.getElementById('rule-ratelimit').value,
+          maxQueueLength: document.getElementById('rule-maxqueue').value,
+          maxSongsPerDevice: document.getElementById('rule-perdevice').value
+        })
+      });
+      if (!r.ok) throw new Error('Failed to save rules');
+      const d = await r.json();
+      rulesSet = true;
+      successEl.textContent = 'Rules saved';
+      successEl.style.display = 'block';
+      setTimeout(() => showStep(6), 600);
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.style.display = 'block';
+    }
+  }
+
+  // Step 6: Summary
+  function buildSummary() {
+    document.getElementById('sum-password').textContent = passwordSet ? 'Set' : 'Already set';
+    document.getElementById('sum-cert').textContent = certExists ? 'Active' : 'Not configured';
+    document.getElementById('sum-spotify').textContent = spotifyConnected ? 'Connected' : 'Not connected';
+    document.getElementById('sum-rules').textContent = rulesSet ? 'Configured' : 'Using defaults';
+
+    // Color the values
+    const setColor = (id, ok) => {
+      document.getElementById(id).style.color = ok ? 'var(--green)' : 'var(--muted)';
+    };
+    setColor('sum-password', true); // always true if we got here
+    setColor('sum-cert', certExists);
+    setColor('sum-spotify', spotifyConnected);
+    setColor('sum-rules', rulesSet);
+  }
+
+  // On page load: check URL params for OAuth redirect back
+  (function init() {
+    const params = new URLSearchParams(window.location.search);
+
+    // Returning from OAuth redirect?
+    if (params.get('step') === 'spotify') {
+      // Password was already set before redirect, mark it
+      passwordSet = true;
+      if (params.get('spotify') === 'connected') {
+        spotifyConnected = true;
+      }
+      // Jump to step 4 to show result
+      showStep(4);
+      // Update badge
+      if (spotifyConnected) {
+        const badge = document.getElementById('sp-badge');
+        badge.className = 'badge connected';
+        badge.textContent = 'Connected';
+      }
+      // Clean URL
+      history.replaceState({}, '', '/admin/setup');
+      return;
+    }
+
+    // If password is already set (user revisiting), skip to welcome but note it
+    // The server only serves this page if no password OR if ?step= is present
+    // so if we're here without ?step, it's a first run
+  })();
 </script>
 </body>
 </html>

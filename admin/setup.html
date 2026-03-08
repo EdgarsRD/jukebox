@@ -190,8 +190,12 @@
 
   <!-- Step 2: Admin Password -->
   <div class="step" id="step-2">
-    <div class="step-title">Admin Password</div>
-    <div class="step-desc">Set a password for the admin panel. You'll use this to manage the jukebox.</div>
+    <div class="step-title">Admin Account</div>
+    <div class="step-desc">Create your admin login. You'll use this to manage the jukebox.</div>
+    <div class="field">
+      <label>Username</label>
+      <input type="text" id="username" placeholder="Choose a username" autocomplete="username" />
+    </div>
     <div class="field">
       <label>Password</label>
       <input type="password" id="pw" placeholder="Choose a strong password" />
@@ -322,8 +326,9 @@
   // Restore password from sessionStorage (survives OAuth redirect)
   function getAuthHeader() {
     const pw = sessionStorage.getItem('jukebox_setup_pw');
+    const user = sessionStorage.getItem('jukebox_setup_user') || 'admin';
     if (!pw) return {};
-    return { 'Authorization': 'Basic ' + btoa('kzd:' + pw) };
+    return { 'Authorization': 'Basic ' + btoa(user + ':' + pw) };
   }
 
   function showStep(n) {
@@ -346,6 +351,7 @@
 
   // Step 2: Set password
   async function setPassword() {
+    const username = document.getElementById('username').value.trim();
     const pw = document.getElementById('pw').value;
     const cpw = document.getElementById('cpw').value;
     const errEl = document.getElementById('pw-error');
@@ -353,6 +359,11 @@
     errEl.style.display = 'none';
     successEl.style.display = 'none';
 
+    if (!username) {
+      errEl.textContent = 'Username is required';
+      errEl.style.display = 'block';
+      return;
+    }
     if (!pw || pw.length < 6) {
       errEl.textContent = 'Password must be at least 6 characters';
       errEl.style.display = 'block';
@@ -372,14 +383,15 @@
       const r = await fetch('/admin/setup/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: pw, confirm: cpw })
+        body: JSON.stringify({ username, password: pw, confirm: cpw })
       });
       if (!r.ok) {
         const text = await r.text();
-        throw new Error(text || 'Failed to set password');
+        throw new Error(text || 'Failed to set account');
       }
-      // Store password for authenticated requests
+      // Store credentials for authenticated requests
       sessionStorage.setItem('jukebox_setup_pw', pw);
+      sessionStorage.setItem('jukebox_setup_user', username);
       passwordSet = true;
       successEl.style.display = 'block';
       btn.textContent = 'Done';
@@ -517,11 +529,12 @@
       }
       // Jump to step 4 to show result
       showStep(4);
-      // Update badge
+      // Update badge and auto-advance
       if (spotifyConnected) {
         const badge = document.getElementById('sp-badge');
         badge.className = 'badge connected';
         badge.textContent = 'Connected';
+        setTimeout(() => showStep(5), 1200);
       }
       // Clean URL
       history.replaceState({}, '', '/admin/setup');

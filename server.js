@@ -26,7 +26,7 @@ const HISTORY_PATH = path.join(__dirname, 'history.json');
 function loadConfig() {
   if (!fs.existsSync(CONFIG_PATH)) {
     const defaults = {
-      auth: { passwordHash: '' },
+      auth: { username: '', passwordHash: '' },
       spotify: { clientId: '', clientSecret: '', refreshToken: '' },
       rules: { rateLimitMinutes: 5, maxQueueLength: 20, maxSongsPerDevice: 2 },
       moderation: { blockMode: 'silent', blockedDevices: [] }
@@ -188,7 +188,8 @@ function adminAuth(req, res, next) {
 
   const decoded = Buffer.from(authHeader.slice(6), 'base64').toString('utf8');
   const [username, password] = decoded.split(':');
-  if (username !== 'kzd') {
+  const expectedUser = cfg.auth.username || 'admin';
+  if (username !== expectedUser) {
     res.set('WWW-Authenticate', 'Basic realm="Jukebox Admin"');
     return res.status(401).send('Invalid credentials');
   }
@@ -406,7 +407,10 @@ app.get('/admin/setup', (req, res) => {
 app.post('/admin/setup/save', async (req, res) => {
   const cfg = loadConfig();
   if (cfg.auth.passwordHash) return res.status(400).send('Password already set');
-  const { password, confirm } = req.body;
+  const { username, password, confirm } = req.body;
+  if (!username || !username.trim()) {
+    return res.status(400).send('Username is required');
+  }
   if (!password || password !== confirm) {
     return res.status(400).send('Passwords do not match');
   }
@@ -415,6 +419,7 @@ app.post('/admin/setup/save', async (req, res) => {
   }
   const hash = await bcrypt.hash(password, 12);
   const cfg2 = loadConfig();
+  cfg2.auth.username = username.trim();
   cfg2.auth.passwordHash = hash;
   saveConfig(cfg2);
   res.json({ success: true });

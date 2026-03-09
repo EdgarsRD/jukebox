@@ -9,6 +9,9 @@ const crypto = require('crypto');
 const querystring = require('querystring');
 const os = require('os');
 const { execFile } = require('child_process');
+const { parseCookies, generateToken, hashToken, signCookie, verifyCookie, getFingerprint, getDeviceInfo } = require('./lib/helpers');
+
+const DATA_DIR = process.env.JUKEBOX_DATA_DIR || __dirname;
 
 const app = express();
 app.use(express.json());
@@ -22,13 +25,13 @@ app.use((req, res, next) => {
 
 // ─── Config helpers ──────────────────────────────────────────────────────────
 
-const CONFIG_PATH = path.join(__dirname, 'config.json');
-const HISTORY_PATH = path.join(__dirname, 'history.json');
+const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
+const HISTORY_PATH = path.join(DATA_DIR, 'history.json');
 
 function loadConfig() {
   if (!fs.existsSync(CONFIG_PATH)) {
     const defaults = {
-      auth: { username: '', passwordHash: '', superadminPasswordHash: '', trustedDevices: [] },
+      auth: { username: '', passwordHash: '', superadminPasswordHash: '', trustedDevices: [], cookieSecret: crypto.randomBytes(32).toString('hex'), sessions: [] },
       network: { domain: '', localIp: '' },
       cloudflare: { apiToken: '', accountKey: '', certType: '' },
       spotify: { clientId: '', clientSecret: '', refreshToken: '' },
@@ -39,7 +42,14 @@ function loadConfig() {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(defaults, null, 2));
     return defaults;
   }
-  return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  // Ensure auth fields exist
+  if (!cfg.auth.cookieSecret) {
+    cfg.auth.cookieSecret = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  }
+  if (!cfg.auth.sessions) cfg.auth.sessions = [];
+  return cfg;
 }
 
 function saveConfig(cfg) {
@@ -68,25 +78,37 @@ function addToHistory(entry) {
   saveHistory(history);
 }
 
-// ─── Queue state (persisted) ─────────────────────────────────────────────────
+// ─── Request queue & playback state (persisted) ─────────────────────────────
 
-const QUEUE_PATH = path.join(__dirname, 'queue.json');
+const REQUEST_QUEUE_PATH = path.join(DATA_DIR, 'requestQueue.json');
+const PLAYBACK_STATE_PATH = path.join(DATA_DIR, 'playbackState.json');
 const rateLimitMap = {}; // fingerprint → timestamp
 
-function loadQueue() {
-  if (!fs.existsSync(QUEUE_PATH)) return [];
-  try { return JSON.parse(fs.readFileSync(QUEUE_PATH, 'utf8')); } catch { return []; }
+function loadRequestQueue() {
+  if (!fs.existsSync(REQUEST_QUEUE_PATH)) return [];
+  try { return JSON.parse(fs.readFileSync(REQUEST_QUEUE_PATH, 'utf8')); } catch { return []; }
 }
 
-function saveQueue() {
-  fs.writeFileSync(QUEUE_PATH, JSON.stringify(internalQueue, null, 2));
+function saveRequestQueue() {
+  fs.writeFileSync(REQUEST_QUEUE_PATH, JSON.stringify(requestQueue, null, 2));
 }
 
-const internalQueue = loadQueue();
+function loadPlaybackState() {
+  const defaults = { mode: 'background', activeRequestId: null, baseContextUri: null, baseContextType: null, baseTrackUri: null, baseProgressMs: 0, lastObservedAt: 0 };
+  if (!fs.existsSync(PLAYBACK_STATE_PATH)) return defaults;
+  try { return { ...defaults, ...JSON.parse(fs.readFileSync(PLAYBACK_STATE_PATH, 'utf8')) }; } catch { return defaults; }
+}
+
+function savePlaybackState() {
+  fs.writeFileSync(PLAYBACK_STATE_PATH, JSON.stringify(playbackState, null, 2));
+}
+
+let requestQueue = loadRequestQueue();
+let playbackState = loadPlaybackState();
 
 // ─── Unban requests (persisted) ──────────────────────────────────────────────
 
-const UNBAN_PATH = path.join(__dirname, 'unban-requests.json');
+const UNBAN_PATH = path.join(DATA_DIR, 'unban-requests.json');
 
 function loadUnbanRequests() {
   if (!fs.existsSync(UNBAN_PATH)) return [];
@@ -97,44 +119,164 @@ function saveUnbanRequests(requests) {
   fs.writeFileSync(UNBAN_PATH, JSON.stringify(requests, null, 2));
 }
 
-// ─── Device fingerprint ───────────────────────────────────────────────────────
+// ─── Device fingerprint & crypto helpers imported from lib/helpers.js ────────
 
-function getFingerprint(req) {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
-  const ua = req.headers['user-agent'] || '';
-  return Buffer.from(ip + ua).toString('base64');
+// ─── Cookie-based session & trusted device management ───────────────────────
+
+function isHttps() {
+  const certPath = path.join(__dirname, 'cert.pem');
+  return fs.existsSync(certPath);
 }
 
-function getDeviceInfo(req) {
+function createSessionCookie(res, role) {
+  const cfg = loadConfig();
+  const token = generateToken();
+  const signed = signCookie(token, cfg.auth.cookieSecret);
+  const secure = isHttps();
+  const maxAge = 24 * 60 * 60; // 24h in seconds
+  let cookie = `jukebox_session=${signed}; HttpOnly; SameSite=Lax; Max-Age=${maxAge}; Path=/`;
+  if (secure) cookie += '; Secure';
+  res.append('Set-Cookie', cookie);
+
+  const now = Date.now();
+  cfg.auth.sessions.push({
+    tokenHash: hashToken(token),
+    role,
+    createdAt: now,
+    expiresAt: now + maxAge * 1000
+  });
+  saveConfig(cfg);
+}
+
+function validateSessionCookie(req) {
+  const cfg = loadConfig();
+  const cookies = parseCookies(req);
+  const signed = cookies['jukebox_session'];
+  if (!signed) return null;
+  const token = verifyCookie(signed, cfg.auth.cookieSecret);
+  if (!token) return null;
+  const h = hashToken(token);
+  const now = Date.now();
+  const session = cfg.auth.sessions.find(s => s.tokenHash === h && s.expiresAt > now);
+  if (!session) return null;
+  return { role: session.role };
+}
+
+function setTrustedDeviceCookie(res, token) {
+  const cfg = loadConfig();
+  const signed = signCookie(token, cfg.auth.cookieSecret);
+  const secure = isHttps();
+  const maxAge = 180 * 24 * 60 * 60; // 180 days
+  let cookie = `jukebox_superadmin=${signed}; HttpOnly; SameSite=Lax; Max-Age=${maxAge}; Path=/`;
+  if (secure) cookie += '; Secure';
+  res.append('Set-Cookie', cookie);
+}
+
+function getTrustedSuperadminFromCookie(req, cfg) {
+  const cookies = parseCookies(req);
+  const signed = cookies['jukebox_superadmin'];
+  if (!signed) return null;
+  const token = verifyCookie(signed, cfg.auth.cookieSecret);
+  if (!token) return null;
+  const h = hashToken(token);
+  const devices = cfg.auth.trustedDevices || [];
+  const device = devices.find(d => d.tokenHash === h);
+  if (!device) return null;
+  // Update last seen info
+  device.lastSeenAt = Date.now();
   const raw = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
-  const ip = raw.replace(/^::ffff:/, '');
-  const ua = req.headers['user-agent'] || '';
+  device.lastIp = raw.replace(/^::ffff:/, '');
+  device.lastUserAgent = req.headers['user-agent'] || '';
+  saveConfig(cfg);
+  return device;
+}
 
-  // Client Hints (Chrome 100+, Edge, Opera — not Firefox/Safari)
-  const chModel = (req.headers['sec-ch-ua-model'] || '').replace(/"/g, '').trim();
-  const chPlatform = (req.headers['sec-ch-ua-platform'] || '').replace(/"/g, '').trim();
-  const chMobile = req.headers['sec-ch-ua-mobile'];
+function clearAuthCookies(res) {
+  res.append('Set-Cookie', 'jukebox_session=; HttpOnly; SameSite=Lax; Max-Age=0; Path=/');
+  res.append('Set-Cookie', 'jukebox_superadmin=; HttpOnly; SameSite=Lax; Max-Age=0; Path=/');
+}
 
-  let os = chPlatform || 'Unknown';
-  if (os === 'Unknown') {
-    if (/iPhone|iPad/.test(ua)) os = 'iOS';
-    else if (/Android/.test(ua)) os = 'Android';
-    else if (/Mac OS/.test(ua)) os = 'macOS';
-    else if (/Windows/.test(ua)) os = 'Windows';
-    else if (/Linux/.test(ua)) os = 'Linux';
+// ─── Request status helpers ─────────────────────────────────────────────────
+
+function markRequestPlaying(id) {
+  const entry = requestQueue.find(r => r.id === id);
+  if (entry) { entry.status = 'playing'; saveRequestQueue(); }
+}
+
+function markRequestPlayed(id) {
+  const entry = requestQueue.find(r => r.id === id);
+  if (entry) { entry.status = 'played'; saveRequestQueue(); }
+}
+
+function markRequestSkipped(id) {
+  const entry = requestQueue.find(r => r.id === id);
+  if (entry) { entry.status = 'skipped'; saveRequestQueue(); }
+}
+
+function getActiveRequest() {
+  return requestQueue.find(r => r.status === 'playing');
+}
+
+function getNextQueuedRequest() {
+  return requestQueue.find(r => r.status === 'queued');
+}
+
+// ─── Background context & playback helpers ──────────────────────────────────
+
+function learnBackgroundContextFromSpotify(spotifyData) {
+  if (!spotifyData || !spotifyData.item) return;
+  if (spotifyData.context) {
+    playbackState.baseContextUri = spotifyData.context.uri;
+    playbackState.baseContextType = spotifyData.context.type;
   }
+  playbackState.baseTrackUri = spotifyData.item.uri;
+  playbackState.baseProgressMs = spotifyData.progress_ms || 0;
+  playbackState.lastObservedAt = Date.now();
+  savePlaybackState();
+}
 
-  let browser = 'Unknown';
-  if (/EdgA?\//.test(ua)) browser = 'Edge';
-  else if (/OPR\/|Opera/.test(ua)) browser = 'Opera';
-  else if (/Firefox\//.test(ua)) browser = 'Firefox';
-  else if (/CriOS|Chrome\//.test(ua)) browser = 'Chrome';
-  else if (/Safari\//.test(ua)) browser = 'Safari';
+function snapshotBackgroundState(spotifyData) {
+  learnBackgroundContextFromSpotify(spotifyData);
+}
 
-  const mobile = chMobile === '?1' || /Mobile|Android|iPhone|iPad/.test(ua);
-  const model = chModel || null; // e.g. "SM-G991B", "Pixel 7" — null on iOS/Firefox/desktop
+async function playRequest(request) {
+  try {
+    await spotifyRequest('put', '/me/player/play', { uris: [request.spotifyUri] });
+    playbackState.mode = 'serving_request';
+    playbackState.activeRequestId = request.id;
+    savePlaybackState();
+    markRequestPlaying(request.id);
+    return true;
+  } catch (err) {
+    console.error('[Supervisor] Failed to play request:', err.response?.status, err.message);
+    return false;
+  }
+}
 
-  return { ip, os, browser, mobile, model };
+async function resumeBackgroundPlayback() {
+  try {
+    if (playbackState.baseContextUri) {
+      const body = { context_uri: playbackState.baseContextUri };
+      if (playbackState.baseTrackUri) {
+        body.offset = { uri: playbackState.baseTrackUri };
+      }
+      await spotifyRequest('put', '/me/player/play', body);
+    }
+    playbackState.mode = 'background';
+    playbackState.activeRequestId = null;
+    savePlaybackState();
+    return true;
+  } catch (err) {
+    console.error('[Supervisor] Failed to resume background:', err.response?.status, err.message);
+    // Clear stale context if resume fails
+    playbackState.baseContextUri = null;
+    playbackState.baseContextType = null;
+    playbackState.baseTrackUri = null;
+    playbackState.mode = 'background';
+    playbackState.activeRequestId = null;
+    savePlaybackState();
+    return false;
+  }
 }
 
 // ─── Spotify token management ─────────────────────────────────────────────────
@@ -176,14 +318,15 @@ async function spotifyRequest(method, endpoint, data = null) {
 // ─── Admin auth middleware ────────────────────────────────────────────────────
 
 async function resolveAuthRole(req, cfg) {
-  // 1. Check fingerprint trust (superadmin shortcut)
-  const fp = getFingerprint(req);
-  const trustedDevices = cfg.auth.trustedDevices || [];
-  if (trustedDevices.some(d => d.fingerprint === fp)) {
-    return 'superadmin';
-  }
+  // 1. Check trusted device cookie (superadmin shortcut)
+  const trustedDevice = getTrustedSuperadminFromCookie(req, cfg);
+  if (trustedDevice) return 'superadmin';
 
-  // 2. Fall back to Basic Auth
+  // 2. Check session cookie
+  const session = validateSessionCookie(req);
+  if (session) return session.role;
+
+  // 3. Fall back to Basic Auth
   const authHeader = req.headers['authorization'];
   if (!authHeader || !authHeader.startsWith('Basic ')) return null;
 
@@ -230,6 +373,11 @@ function adminAuth(req, res, next) {
       return res.status(401).send('Authentication required');
     }
     req.authRole = role;
+    // Create session cookie on Basic Auth login so subsequent requests don't need it
+    const cookies = parseCookies(req);
+    if (!cookies['jukebox_session'] && req.headers['authorization']) {
+      createSessionCookie(res, role);
+    }
     next();
   });
 }
@@ -243,7 +391,7 @@ function requireSuperadmin(req, res, next) {
 
 // ─── Public routes ────────────────────────────────────────────────────────────
 
-const UPLOADS_DIR = path.join(__dirname, 'uploads');
+const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR);
 app.use('/uploads', express.static(UPLOADS_DIR));
 
@@ -326,13 +474,14 @@ app.post('/api/queue', async (req, res) => {
     }
   }
 
-  // Max queue length
-  if (internalQueue.length >= cfg.rules.maxQueueLength) {
+  // Max queue length (count only queued/playing)
+  const activeCount = requestQueue.filter(r => r.status === 'queued' || r.status === 'playing').length;
+  if (activeCount >= cfg.rules.maxQueueLength) {
     return res.status(400).json({ error: 'Queue is full. Try again later!' });
   }
 
-  // Max per device
-  const deviceCount = internalQueue.filter(s => s.addedBy === fp).length;
+  // Max per device (count only queued/playing)
+  const deviceCount = requestQueue.filter(s => s.addedBy === fp && (s.status === 'queued' || s.status === 'playing')).length;
   if (deviceCount >= cfg.rules.maxSongsPerDevice) {
     return res.status(400).json({
       error: `You already have ${cfg.rules.maxSongsPerDevice} songs in the queue.`
@@ -343,10 +492,7 @@ app.post('/api/queue', async (req, res) => {
   if (!uri) return res.status(400).json({ error: 'Missing track URI' });
 
   try {
-    console.log(`[Queue] Attempting to queue: ${title} (${uri})`);
-    console.log(`[Queue] Access token valid: ${!!accessToken}, expires in: ${Math.round((accessTokenExpiry - Date.now()) / 1000)}s`);
-    const queueRes = await spotifyRequest('post', `/me/player/queue?uri=${encodeURIComponent(uri)}`);
-    console.log(`[Queue] Spotify response status: ${queueRes.status}`);
+    console.log(`[Queue] Adding to request queue: ${title} (${uri})`);
 
     const entry = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2),
@@ -355,10 +501,11 @@ app.post('/api/queue', async (req, res) => {
       artist,
       albumArt,
       addedBy: fp,
-      addedAt: now
+      addedAt: now,
+      status: 'queued'
     };
-    internalQueue.push(entry);
-    saveQueue();
+    requestQueue.push(entry);
+    saveRequestQueue();
     rateLimitMap[fp] = now;
 
     // Log to history
@@ -378,21 +525,20 @@ app.post('/api/queue', async (req, res) => {
     res.json({ success: true, message: `"${title}" added to the queue!` });
   } catch (err) {
     console.error('[Queue] Error:', err.message);
-    console.error('[Queue] Spotify status:', err.response?.status);
-    console.error('[Queue] Spotify says:', JSON.stringify(err.response?.data));
-    console.error('[Queue] URI was:', uri);
-    res.status(500).json({ error: 'Failed to add song. Is Spotify playing?' });
+    res.status(500).json({ error: 'Failed to add song.' });
   }
 });
 
 // Get queue
 app.get('/api/queue', (req, res) => {
   const fp = getFingerprint(req);
-  res.json({ queue: internalQueue.map(s => ({
+  const active = requestQueue.filter(r => r.status === 'queued' || r.status === 'playing');
+  res.json({ queue: active.map(s => ({
     id: s.id,
     title: s.title,
     artist: s.artist,
     albumArt: s.albumArt,
+    status: s.status,
     own: s.addedBy === fp
   }))});
 });
@@ -400,11 +546,12 @@ app.get('/api/queue', (req, res) => {
 // Remove own song from queue
 app.delete('/api/queue/:id', (req, res) => {
   const fp = getFingerprint(req);
-  const idx = internalQueue.findIndex(s => s.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  if (internalQueue[idx].addedBy !== fp) return res.status(403).json({ error: 'You can only remove your own songs' });
-  internalQueue.splice(idx, 1);
-  saveQueue();
+  const entry = requestQueue.find(s => s.id === req.params.id);
+  if (!entry) return res.status(404).json({ error: 'Not found' });
+  if (entry.addedBy !== fp) return res.status(403).json({ error: 'You can only remove your own songs' });
+  if (entry.status !== 'queued') return res.status(400).json({ error: 'Can only cancel queued songs' });
+  entry.status = 'cancelled';
+  saveRequestQueue();
   res.json({ success: true });
 });
 
@@ -414,15 +561,6 @@ app.get('/api/nowplaying', async (req, res) => {
     const r = await spotifyRequest('get', '/me/player/currently-playing');
     if (!r.data || !r.data.item) return res.json({ playing: false });
     const t = r.data.item;
-
-    // Auto-prune: remove queue entries that are now playing or already played
-    const currentUri = t.uri;
-    let pruned = false;
-    while (internalQueue.length > 0 && internalQueue[0].spotifyUri === currentUri) {
-      internalQueue.shift();
-      pruned = true;
-    }
-    if (pruned) saveQueue();
 
     res.json({
       playing: r.data.is_playing,
@@ -562,6 +700,19 @@ const adminRouter = express.Router();
 
 // Logout — must be before adminAuth to avoid auth check
 adminRouter.get('/api/logout', (req, res) => {
+  // Remove matching session from config
+  const cookies = parseCookies(req);
+  const signed = cookies['jukebox_session'];
+  if (signed) {
+    const cfg = loadConfig();
+    const token = verifyCookie(signed, cfg.auth.cookieSecret);
+    if (token) {
+      const h = hashToken(token);
+      cfg.auth.sessions = cfg.auth.sessions.filter(s => s.tokenHash !== h);
+      saveConfig(cfg);
+    }
+  }
+  clearAuthCookies(res);
   res.set('WWW-Authenticate', 'Basic realm="Jukebox Admin"');
   res.status(401).send('<html><head><meta http-equiv="refresh" content="0;url=/admin"></head></html>');
 });
@@ -582,34 +733,52 @@ adminRouter.get('/api/auth/role', (req, res) => {
 adminRouter.get('/api/trusted-devices', requireSuperadmin, (req, res) => {
   const cfg = loadConfig();
   const devices = (cfg.auth.trustedDevices || []).map(d => ({
-    shortId: crypto.createHash('sha256').update(d.fingerprint).digest('hex').slice(0, 8),
+    id: d.id,
     label: d.label,
-    trustedAt: d.trustedAt
+    role: d.role || 'superadmin',
+    createdAt: d.createdAt,
+    lastSeenAt: d.lastSeenAt,
+    lastIp: d.lastIp,
+    lastUserAgent: d.lastUserAgent
   }));
   res.json({ devices });
 });
 
 adminRouter.post('/api/trusted-devices', requireSuperadmin, (req, res) => {
-  const fp = getFingerprint(req);
   const cfg = loadConfig();
   if (!cfg.auth.trustedDevices) cfg.auth.trustedDevices = [];
-  if (cfg.auth.trustedDevices.some(d => d.fingerprint === fp)) {
-    return res.json({ success: true, message: 'Device already trusted' });
-  }
   const device = getDeviceInfo(req);
   const label = [device.mobile ? 'Mobile' : 'Desktop', device.os, device.browser].filter(Boolean).join(' / ');
-  cfg.auth.trustedDevices.push({ fingerprint: fp, label, trustedAt: Date.now() });
+  const token = generateToken();
+  const now = Date.now();
+  cfg.auth.trustedDevices.push({
+    id: crypto.randomUUID(),
+    tokenHash: hashToken(token),
+    label,
+    role: 'superadmin',
+    createdAt: now,
+    lastSeenAt: now,
+    lastIp: device.ip,
+    lastUserAgent: req.headers['user-agent'] || ''
+  });
+  saveConfig(cfg);
+  setTrustedDeviceCookie(res, token);
+  res.json({ success: true });
+});
+
+adminRouter.delete('/api/trusted-devices/:id', requireSuperadmin, (req, res) => {
+  const cfg = loadConfig();
+  if (!cfg.auth.trustedDevices) return res.json({ success: true });
+  cfg.auth.trustedDevices = cfg.auth.trustedDevices.filter(d => d.id !== req.params.id);
   saveConfig(cfg);
   res.json({ success: true });
 });
 
-adminRouter.delete('/api/trusted-devices/:shortId', requireSuperadmin, (req, res) => {
+// Revoke trusted device (also clears cookie if it's the current device)
+adminRouter.post('/api/trusted-devices/revoke/:id', requireSuperadmin, (req, res) => {
   const cfg = loadConfig();
   if (!cfg.auth.trustedDevices) return res.json({ success: true });
-  cfg.auth.trustedDevices = cfg.auth.trustedDevices.filter(d => {
-    const sid = crypto.createHash('sha256').update(d.fingerprint).digest('hex').slice(0, 8);
-    return sid !== req.params.shortId;
-  });
+  cfg.auth.trustedDevices = cfg.auth.trustedDevices.filter(d => d.id !== req.params.id);
   saveConfig(cfg);
   res.json({ success: true });
 });
@@ -881,13 +1050,14 @@ adminRouter.delete('/api/branding/logo', requireSuperadmin, (req, res) => {
 
 // Queue management
 adminRouter.get('/api/queue', (req, res) => {
-  res.json({ queue: internalQueue });
+  res.json({ queue: requestQueue });
 });
 
 adminRouter.post('/api/skip', async (req, res) => {
   try {
+    const active = getActiveRequest();
+    if (active) markRequestSkipped(active.id);
     await spotifyRequest('post', '/me/player/next');
-    if (internalQueue.length > 0) { internalQueue.shift(); saveQueue(); }
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -895,47 +1065,41 @@ adminRouter.post('/api/skip', async (req, res) => {
 });
 
 adminRouter.delete('/api/queue/:id', (req, res) => {
-  const idx = internalQueue.findIndex(s => s.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  internalQueue.splice(idx, 1);
-  saveQueue();
+  const entry = requestQueue.find(s => s.id === req.params.id);
+  if (!entry) return res.status(404).json({ error: 'Not found' });
+  entry.status = 'cancelled';
+  saveRequestQueue();
   res.json({ success: true });
 });
 
 adminRouter.post('/api/queue/clear', (req, res) => {
-  internalQueue.length = 0;
-  saveQueue();
-  res.json({ success: true });
-});
-
-adminRouter.post('/api/queue/sync', async (req, res) => {
-  try {
-    const r = await spotifyRequest('get', '/me/player/queue');
-    const spotifyUris = (r.data.queue || []).map(t => t.uri);
-    const before = internalQueue.length;
-    // Remove internal entries no longer in Spotify's queue
-    for (let i = internalQueue.length - 1; i >= 0; i--) {
-      if (!spotifyUris.includes(internalQueue[i].spotifyUri)) {
-        internalQueue.splice(i, 1);
-      }
-    }
-    const removed = before - internalQueue.length;
-    if (removed > 0) saveQueue();
-    res.json({ success: true, removed, remaining: internalQueue.length });
-  } catch (err) {
-    res.status(500).json({ error: 'Could not fetch Spotify queue: ' + err.message });
+  for (const entry of requestQueue) {
+    if (entry.status === 'queued') entry.status = 'cancelled';
   }
+  saveRequestQueue();
+  res.json({ success: true });
 });
 
 adminRouter.post('/api/queue/reorder', (req, res) => {
   const { fromIndex, toIndex } = req.body;
-  if (fromIndex < 0 || toIndex < 0 || fromIndex >= internalQueue.length || toIndex >= internalQueue.length) {
+  // Only reorder queued items
+  const queuedItems = requestQueue.filter(r => r.status === 'queued');
+  if (fromIndex < 0 || toIndex < 0 || fromIndex >= queuedItems.length || toIndex >= queuedItems.length) {
     return res.status(400).json({ error: 'Invalid indices' });
   }
-  const [item] = internalQueue.splice(fromIndex, 1);
-  internalQueue.splice(toIndex, 0, item);
-  saveQueue();
+  const [item] = queuedItems.splice(fromIndex, 1);
+  queuedItems.splice(toIndex, 0, item);
+  // Rebuild requestQueue: non-queued items keep position, queued items get new order
+  const nonQueued = requestQueue.filter(r => r.status !== 'queued');
+  requestQueue.length = 0;
+  requestQueue.push(...nonQueued, ...queuedItems);
+  saveRequestQueue();
   res.json({ success: true });
+});
+
+// Playback state
+adminRouter.get('/api/playback-state', (req, res) => {
+  res.json(playbackState);
 });
 
 // History
@@ -1075,74 +1239,189 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
-// ─── Start server ─────────────────────────────────────────────────────────────
+// ─── Playback supervisor ────────────────────────────────────────────────────
 
-const PORT = process.env.PORT || 3000;
-const CERT_PATH = path.join(__dirname, 'cert.pem');
-const KEY_PATH = path.join(__dirname, 'key.pem');
+let lastSupervisorAction = 0;
 
-const startupCfg = loadConfig();
-const displayHost = startupCfg.network?.domain || 'localhost';
-
-if (fs.existsSync(CERT_PATH) && fs.existsSync(KEY_PATH)) {
-  const httpsOptions = {
-    cert: fs.readFileSync(CERT_PATH),
-    key: fs.readFileSync(KEY_PATH)
-  };
-  https.createServer(httpsOptions, app).listen(PORT, () => {
-    console.log(`\n✅  Jukebox running`);
-    console.log(`    Patron UI : https://${displayHost}:${PORT}`);
-    console.log(`    Admin     : https://${displayHost}:${PORT}/admin\n`);
-  });
-  // Redirect HTTP → HTTPS
-  http.createServer((req, res) => {
-    res.writeHead(301, { Location: `https://${req.headers.host}${req.url}` });
-    res.end();
-  }).listen(3001, () => console.log('↩️  HTTP→HTTPS redirect active on port 3001'));
-} else {
-  console.warn('⚠️  No cert.pem/key.pem found — running HTTP only (generate cert via setup wizard)');
-  app.listen(PORT, () => {
-    console.log(`\nJukebox running (HTTP only — generate cert for HTTPS)`);
-    console.log(`  Patron UI : http://localhost:${PORT}`);
-    console.log(`  Admin     : http://localhost:${PORT}/admin\n`);
-  });
-}
-
-// ─── Auto-renewal for Let's Encrypt certs ─────────────────────────────────────
-
-function checkCertRenewal() {
+async function playbackSupervisorTick() {
   try {
     const cfg = loadConfig();
-    if (cfg.cloudflare?.certType !== 'letsencrypt' || !cfg.cloudflare?.apiToken) return;
-    if (!fs.existsSync(CERT_PATH)) return;
+    // Don't run if Spotify not configured
+    if (!cfg.spotify.clientId || !cfg.spotify.clientSecret || !cfg.spotify.refreshToken) return;
 
-    execFile('openssl', ['x509', '-enddate', '-noout', '-in', CERT_PATH], async (err, stdout) => {
-      if (err) return;
-      const match = stdout.match(/notAfter=(.+)/);
-      if (!match) return;
-      const expiresAt = new Date(match[1]);
-      const daysLeft = (expiresAt - Date.now()) / (1000 * 60 * 60 * 24);
-      console.log(`[LE] Certificate expires in ${Math.floor(daysLeft)} days`);
-      if (daysLeft < 30) {
-        console.log('[LE] Renewing certificate...');
-        try {
-          const { obtainCertificate } = require('./acme-cloudflare');
-          await obtainCertificate({
-            domain: cfg.network.domain,
-            cloudflareToken: cfg.cloudflare.apiToken,
-            certPath: CERT_PATH,
-            keyPath: KEY_PATH,
-            accountKey: cfg.cloudflare.accountKey || null
-          });
-          console.log('[LE] Certificate renewed. Restarting...');
-          process.exit(1);
-        } catch (e) {
-          console.error('[LE] Renewal failed:', e.message);
+    const now = Date.now();
+    // Guard: prevent rapid-fire Spotify API calls
+    if (now - lastSupervisorAction < 2000) return;
+
+    let spotifyData;
+    try {
+      const r = await spotifyRequest('get', '/me/player/currently-playing');
+      spotifyData = r.data;
+    } catch (err) {
+      // Spotify not reachable or no active device — skip this tick
+      return;
+    }
+
+    if (playbackState.mode === 'background') {
+      // Learn current background context
+      if (spotifyData && spotifyData.item) {
+        learnBackgroundContextFromSpotify(spotifyData);
+      }
+      // Check if there's a queued request to play
+      const next = getNextQueuedRequest();
+      if (next) {
+        if (spotifyData && spotifyData.item) {
+          snapshotBackgroundState(spotifyData);
+        }
+        lastSupervisorAction = Date.now();
+        await playRequest(next);
+      }
+    } else if (playbackState.mode === 'serving_request') {
+      const active = getActiveRequest();
+      if (!active) {
+        // Active request disappeared (manually removed?) — resume background
+        lastSupervisorAction = Date.now();
+        await resumeBackgroundPlayback();
+        return;
+      }
+
+      // Check if current Spotify track matches the active request
+      const currentUri = spotifyData?.item?.uri;
+      if (currentUri && currentUri !== active.spotifyUri) {
+        // Song changed — the request finished playing (or was skipped externally)
+        markRequestPlayed(active.id);
+        const next = getNextQueuedRequest();
+        if (next) {
+          lastSupervisorAction = Date.now();
+          await playRequest(next);
+        } else {
+          lastSupervisorAction = Date.now();
+          await resumeBackgroundPlayback();
         }
       }
-    });
-  } catch {}
+    }
+  } catch (err) {
+    console.error('[Supervisor] Error:', err.message);
+  }
 }
 
-setTimeout(checkCertRenewal, 10000);
-setInterval(checkCertRenewal, 24 * 60 * 60 * 1000);
+// ─── Startup migrations ────────────────────────────────────────────────────
+
+(function runStartupMigrations() {
+  const cfg = loadConfig();
+
+  // Migrate old fingerprint-based trusted devices
+  if (cfg.auth.trustedDevices && cfg.auth.trustedDevices.length > 0) {
+    const hasOld = cfg.auth.trustedDevices.some(d => d.fingerprint && !d.tokenHash);
+    if (hasOld) {
+      console.log('[Migration] Removing old fingerprint-based trusted devices — re-trust from admin UI');
+      cfg.auth.trustedDevices = cfg.auth.trustedDevices.filter(d => d.tokenHash);
+      saveConfig(cfg);
+    }
+  }
+
+  // Prune expired sessions
+  const now = Date.now();
+  if (cfg.auth.sessions && cfg.auth.sessions.length > 0) {
+    const before = cfg.auth.sessions.length;
+    cfg.auth.sessions = cfg.auth.sessions.filter(s => s.expiresAt > now);
+    if (cfg.auth.sessions.length < before) saveConfig(cfg);
+  }
+
+  // Migrate old queue.json to requestQueue.json
+  const OLD_QUEUE_PATH = path.join(__dirname, 'queue.json');
+  if (fs.existsSync(OLD_QUEUE_PATH) && !fs.existsSync(REQUEST_QUEUE_PATH)) {
+    try {
+      const oldQueue = JSON.parse(fs.readFileSync(OLD_QUEUE_PATH, 'utf8'));
+      if (Array.isArray(oldQueue) && oldQueue.length > 0) {
+        const migrated = oldQueue.map(entry => ({ ...entry, status: 'queued' }));
+        requestQueue.length = 0;
+        requestQueue.push(...migrated);
+        saveRequestQueue();
+        console.log(`[Migration] Migrated ${migrated.length} entries from queue.json to requestQueue.json`);
+      }
+      fs.unlinkSync(OLD_QUEUE_PATH);
+    } catch (err) {
+      console.error('[Migration] Failed to migrate queue.json:', err.message);
+    }
+  }
+})();
+
+// ─── Start server ─────────────────────────────────────────────────────────────
+
+if (require.main === module) {
+  const PORT = process.env.PORT || 3000;
+  const CERT_PATH = path.join(__dirname, 'cert.pem');
+  const KEY_PATH = path.join(__dirname, 'key.pem');
+
+  const startupCfg = loadConfig();
+  const displayHost = startupCfg.network?.domain || 'localhost';
+
+  if (fs.existsSync(CERT_PATH) && fs.existsSync(KEY_PATH)) {
+    const httpsOptions = {
+      cert: fs.readFileSync(CERT_PATH),
+      key: fs.readFileSync(KEY_PATH)
+    };
+    https.createServer(httpsOptions, app).listen(PORT, () => {
+      console.log(`\n✅  Jukebox running`);
+      console.log(`    Patron UI : https://${displayHost}:${PORT}`);
+      console.log(`    Admin     : https://${displayHost}:${PORT}/admin\n`);
+    });
+    // Redirect HTTP → HTTPS
+    http.createServer((req, res) => {
+      res.writeHead(301, { Location: `https://${req.headers.host}${req.url}` });
+      res.end();
+    }).listen(3001, () => console.log('↩️  HTTP→HTTPS redirect active on port 3001'));
+  } else {
+    console.warn('⚠️  No cert.pem/key.pem found — running HTTP only (generate cert via setup wizard)');
+    app.listen(PORT, () => {
+      console.log(`\nJukebox running (HTTP only — generate cert for HTTPS)`);
+      console.log(`  Patron UI : http://localhost:${PORT}`);
+      console.log(`  Admin     : http://localhost:${PORT}/admin\n`);
+    });
+  }
+
+  // ─── Auto-renewal for Let's Encrypt certs ───────────────────────────────────
+
+  function checkCertRenewal() {
+    try {
+      const cfg = loadConfig();
+      if (cfg.cloudflare?.certType !== 'letsencrypt' || !cfg.cloudflare?.apiToken) return;
+      if (!fs.existsSync(CERT_PATH)) return;
+
+      execFile('openssl', ['x509', '-enddate', '-noout', '-in', CERT_PATH], async (err, stdout) => {
+        if (err) return;
+        const match = stdout.match(/notAfter=(.+)/);
+        if (!match) return;
+        const expiresAt = new Date(match[1]);
+        const daysLeft = (expiresAt - Date.now()) / (1000 * 60 * 60 * 24);
+        console.log(`[LE] Certificate expires in ${Math.floor(daysLeft)} days`);
+        if (daysLeft < 30) {
+          console.log('[LE] Renewing certificate...');
+          try {
+            const { obtainCertificate } = require('./acme-cloudflare');
+            await obtainCertificate({
+              domain: cfg.network.domain,
+              cloudflareToken: cfg.cloudflare.apiToken,
+              certPath: CERT_PATH,
+              keyPath: KEY_PATH,
+              accountKey: cfg.cloudflare.accountKey || null
+            });
+            console.log('[LE] Certificate renewed. Restarting...');
+            process.exit(1);
+          } catch (e) {
+            console.error('[LE] Renewal failed:', e.message);
+          }
+        }
+      });
+    } catch {}
+  }
+
+  setTimeout(checkCertRenewal, 10000);
+  setInterval(checkCertRenewal, 24 * 60 * 60 * 1000);
+
+  // Start playback supervisor
+  setInterval(playbackSupervisorTick, 4000);
+}
+
+module.exports = { app, requestQueue, playbackState, saveRequestQueue, savePlaybackState, loadConfig, saveConfig, markRequestPlaying, markRequestPlayed, markRequestSkipped, getActiveRequest, getNextQueuedRequest, learnBackgroundContextFromSpotify, playRequest, resumeBackgroundPlayback, playbackSupervisorTick, rateLimitMap, get lastSupervisorAction() { return lastSupervisorAction; }, set lastSupervisorAction(v) { lastSupervisorAction = v; }, resetAccessToken() { accessToken = null; accessTokenExpiry = 0; } };

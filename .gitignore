@@ -2,6 +2,8 @@ node_modules/
 uploads/
 config.json
 queue.json
+requestQueue.json
+playbackState.json
 unban-requests.json
 history.json
 cert.pem

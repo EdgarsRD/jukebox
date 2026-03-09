@@ -109,6 +109,7 @@ They tap Advanced → Proceed. Never see it again on that device.
 ```bash
 npm install
 npm run dev                  # nodemon — auto-restarts on changes
+npm test                     # run test suite (vitest)
 ```
 
 Open `http://localhost:3000/admin` — run through the setup wizard.
@@ -161,7 +162,7 @@ If the USB backup is lost or unavailable:
    ```
 2. Download and extract the latest release from **[GitHub Releases](https://github.com/EdgarsRD/jukebox/releases/latest)**
    ```bash
-   curl -L -o jukebox.tar.gz https://github.com/EdgarsRD/jukebox/archive/refs/tags/v1.1.0.tar.gz
+   curl -L -o jukebox.tar.gz "$(curl -s https://api.github.com/repos/EdgarsRD/jukebox/releases/latest | grep tarball_url | cut -d'"' -f4)"
    tar -xzf jukebox.tar.gz
    cd jukebox-*/
    ```
@@ -194,10 +195,15 @@ sudo systemctl stop jukebox         # stop manually
 jukebox/
 ├── server.js           — Express server + all API routes
 ├── package.json
+├── vitest.config.js    — Test runner config
+├── acme-cloudflare.js  — Let's Encrypt DNS-01 via Cloudflare
 ├── config.json         — Auto-created by setup wizard (gitignored)
 ├── cert.pem            — TLS cert (gitignored, travels with app)
 ├── key.pem             — TLS key (gitignored, travels with app)
 ├── history.json        — Request history (gitignored)
+├── lib/
+│   └── helpers.js      — Cookie, token, and fingerprint utilities
+├── test/               — Test suite (vitest + supertest)
 ├── public/
 │   └── index.html      — Patron UI (search + queue)
 ├── admin/

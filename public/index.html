@@ -443,13 +443,13 @@
       }
       queueList.innerHTML = data.queue.map((s, i) => `
         <div class="queue-item">
-          <span class="queue-num">${i + 1}</span>
+          <span class="queue-num">${s.status === 'playing' ? '▶' : i + 1}</span>
           <img class="queue-art" src="${s.albumArt}" alt="" loading="lazy" />
           <div class="queue-info">
-            <div class="queue-title">${escHtml(s.title)}</div>
+            <div class="queue-title">${escHtml(s.title)}${s.status === 'playing' ? ' <span style="color:var(--green);font-size:0.72rem">Now Playing</span>' : ''}</div>
             <div class="queue-artist">${escHtml(s.artist)}</div>
           </div>
-          ${s.own ? `<button class="queue-remove" data-id="${s.id}" aria-label="Remove">×</button>` : ''}
+          ${s.own && s.status === 'queued' ? `<button class="queue-remove" data-id="${s.id}" aria-label="Remove">×</button>` : ''}
         </div>
       `).join('');
     } catch {}

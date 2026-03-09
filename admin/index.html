@@ -221,10 +221,7 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
           Skip Track
         </button>
-        <button class="btn btn-secondary" onclick="syncQueue()">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
-          Sync with Spotify
-        </button>
+        <span id="playback-mode-badge" class="badge disconnected" style="align-self:center;margin-left:auto">—</span>
         <button class="btn btn-danger" onclick="clearQueue()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14H7L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
           Clear Queue
@@ -352,7 +349,7 @@
 
       <div class="card">
         <div class="card-title">Trusted Devices</div>
-        <p class="info-text" style="margin-bottom:16px">Trusted devices get superadmin access without entering a password. Based on IP + browser fingerprint — use only on trusted networks.</p>
+        <p class="info-text" style="margin-bottom:16px">Trusted devices get superadmin access via a secure cookie — no password needed. The cookie persists for 180 days.</p>
         <button class="btn btn-primary" onclick="trustDevice()" style="margin-bottom:16px">Trust This Device</button>
         <div id="trusted-devices-list"><div class="empty-state">No trusted devices</div></div>
       </div>
@@ -465,25 +462,33 @@
   }
 
   // ── Queue ──
+  function statusBadge(status) {
+    const colors = { queued: 'var(--muted)', playing: 'var(--green)', played: 'var(--muted)', skipped: 'var(--red)', cancelled: 'var(--red)' };
+    const c = colors[status] || 'var(--muted)';
+    return `<span style="font-size:0.7rem;padding:2px 8px;border-radius:100px;background:${c}22;color:${c};border:1px solid ${c}44;white-space:nowrap">${status}</span>`;
+  }
+
   async function loadAdminQueue() {
     try {
       const r = await fetch('/admin/api/queue');
       const d = await r.json();
       const list = document.getElementById('admin-queue-list');
-      if (!d.queue.length) {
+      // Show only active entries by default (queued/playing)
+      const active = d.queue.filter(s => s.status === 'queued' || s.status === 'playing');
+      if (!active.length) {
         list.innerHTML = '<div class="empty-state">Queue is empty</div>';
         return;
       }
-      list.innerHTML = d.queue.map((s, i) => `
-        <div class="queue-row" draggable="true" data-id="${s.id}" data-idx="${i}"
+      list.innerHTML = active.map((s, i) => `
+        <div class="queue-row" draggable="${s.status === 'queued' ? 'true' : 'false'}" data-id="${s.id}" data-idx="${i}"
           ondragstart="dragStart(event)" ondragend="dragEnd(event)">
           <span class="drag-handle" title="Drag to reorder">⠿</span>
           <img class="q-art" src="${s.albumArt}" alt="" />
           <div class="q-info">
-            <div class="q-title">${escHtml(s.title)}</div>
+            <div class="q-title">${escHtml(s.title)} ${statusBadge(s.status)}</div>
             <div class="q-artist">${escHtml(s.artist)}</div>
           </div>
-          <button class="btn-remove" onclick="removeTrack('${s.id}')" title="Remove">×</button>
+          ${s.status === 'queued' ? `<button class="btn-remove" onclick="removeTrack('${s.id}')" title="Remove">×</button>` : ''}
         </div>
       `).join('');
     } catch {}
@@ -496,15 +501,8 @@
     else toast(d.error, 'error');
   }
 
-  async function syncQueue() {
-    const r = await fetch('/admin/api/queue/sync', { method: 'POST' });
-    const d = await r.json();
-    if (d.success) { toast(`Synced — removed ${d.removed}, ${d.remaining} remaining`, 'success'); loadAdminQueue(); }
-    else toast(d.error, 'error');
-  }
-
   async function clearQueue() {
-    if (!confirm('Clear the queue display? Songs already sent to Spotify will still play. Clear Spotify queue manually.')) return;
+    if (!confirm('Cancel all queued requests?')) return;
     const r = await fetch('/admin/api/queue/clear', { method: 'POST' });
     const d = await r.json();
     if (d.success) { toast('Queue cleared', 'success'); loadAdminQueue(); }
@@ -729,11 +727,12 @@
   }
 
   function logout() {
-    // XMLHttpRequest with bad credentials clears the cached auth
-    const xhr = new XMLHttpRequest();
-    xhr.open('GET', '/admin/api/logout', true, '_logout_', '_logout_');
-    xhr.onloadend = () => { window.location.href = '/admin'; };
-    xhr.send();
+    // Call logout endpoint to clear cookies and session, then redirect
+    fetch('/admin/api/logout').then(() => {
+      window.location.href = '/admin';
+    }).catch(() => {
+      window.location.href = '/admin';
+    });
   }
 
   // ── Trusted devices ──
@@ -743,15 +742,19 @@
       const d = await r.json();
       const list = document.getElementById('trusted-devices-list');
       if (!d.devices.length) { list.innerHTML = '<div class="empty-state">No trusted devices</div>'; return; }
-      list.innerHTML = d.devices.map(dev => `
+      list.innerHTML = d.devices.map(dev => {
+        const lastSeen = dev.lastSeenAt ? new Date(dev.lastSeenAt).toLocaleString() : 'Never';
+        const created = dev.createdAt ? new Date(dev.createdAt).toLocaleString() : '—';
+        return `
         <div class="queue-row" style="flex-wrap:wrap;gap:8px">
           <div class="q-info" style="flex:1;min-width:180px">
-            <div class="q-title">${escHtml(dev.label)} <span style="opacity:0.4">${dev.shortId}</span></div>
-            <div class="q-artist" style="opacity:0.5">${new Date(dev.trustedAt).toLocaleString()}</div>
+            <div class="q-title">${escHtml(dev.label)}</div>
+            <div class="q-artist">Last seen: ${lastSeen}${dev.lastIp ? ' · ' + escHtml(dev.lastIp) : ''}</div>
+            <div class="q-artist" style="opacity:0.35">Trusted: ${created}</div>
           </div>
-          <button class="btn btn-danger" style="font-size:0.78rem;padding:5px 10px" onclick="revokeTrust('${dev.shortId}')">Revoke</button>
-        </div>
-      `).join('');
+          <button class="btn btn-danger" style="font-size:0.78rem;padding:5px 10px" onclick="revokeTrust('${dev.id}')">Revoke</button>
+        </div>`;
+      }).join('');
     } catch {}
   }
 
@@ -766,8 +769,8 @@
     }
   }
 
-  async function revokeTrust(shortId) {
-    const r = await fetch(`/admin/api/trusted-devices/${shortId}`, { method: 'DELETE' });
+  async function revokeTrust(id) {
+    const r = await fetch(`/admin/api/trusted-devices/revoke/${id}`, { method: 'POST' });
     const d = await r.json();
     if (d.success) { toast('Trust revoked', 'success'); loadTrustedDevices(); }
     else toast(d.error, 'error');
@@ -970,14 +973,32 @@
     setTimeout(() => { window.location.hash = 'moderation'; location.reload(); }, 800);
   }
 
+  // ── Playback state ──
+  async function loadPlaybackState() {
+    try {
+      const r = await fetch('/admin/api/playback-state');
+      const d = await r.json();
+      const badge = document.getElementById('playback-mode-badge');
+      if (d.mode === 'serving_request') {
+        badge.className = 'badge connected';
+        badge.textContent = 'Serving Request';
+      } else {
+        badge.className = 'badge disconnected';
+        badge.textContent = 'Background';
+      }
+    } catch {}
+  }
+
   // ── Init ──
   loadAuthRole();
   loadConfig();
   loadAdminQueue();
   loadNowPlaying();
+  loadPlaybackState();
 
   setInterval(loadAdminQueue, 8000);
   setInterval(loadNowPlaying, 5000);
+  setInterval(loadPlaybackState, 5000);
 </script>
 
 <!-- Block/comment modal -->
